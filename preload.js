@@ -1,6 +1,12 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  // Аутентификация
+  login: (data) => ipcRenderer.invoke('auth:login', data),
+  register: (data) => ipcRenderer.invoke('auth:register', data),
+  getUsers: () => ipcRenderer.invoke('auth:getUsers'),
+  requestDeleteUser: (data) => ipcRenderer.invoke('auth:requestDelete', data),
+  
   // База данных - БОТЫ
   getBots: () => ipcRenderer.invoke('db:getBots'),
   addBot: (data) => ipcRenderer.invoke('db:addBot', data),
