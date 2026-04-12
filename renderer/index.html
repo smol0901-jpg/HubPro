@@ -17,10 +17,8 @@
     .bg-glow-3 { top: 50%; left: 50%; transform: translate(-50%,-50%); background: #06b6d4; opacity: 0.08; }
     
     .app-container { position: relative; z-index: 1; }
-    
     .glass-card { background: rgba(15,23,42,0.6); border: 1px solid rgba(148,163,184,0.1); border-radius: 20px; backdrop-filter: blur(20px); transition: all 0.4s cubic-bezier(0.4,0,0.2,1); }
     .glass-card:hover { border-color: rgba(59,130,246,0.3); box-shadow: 0 25px 50px rgba(0,0,0,0.4), 0 0 30px rgba(59,130,246,0.1); transform: translateY(-4px); }
-    
     .stat-card { background: linear-gradient(135deg, rgba(15,23,42,0.8) 0%, rgba(30,41,59,0.6) 100%); border: 1px solid rgba(148,163,184,0.15); border-radius: 16px; backdrop-filter: blur(20px); transition: all 0.3s ease; }
     .stat-card:hover { transform: translateY(-2px); border-color: rgba(59,130,246,0.4); }
     
@@ -75,6 +73,8 @@
     .badge-green { background: rgba(34,197,94,0.2); color: #4ade80; }
     .badge-red { background: rgba(239,68,68,0.2); color: #f87171; }
     .badge-purple { background: rgba(139,92,246,0.2); color: #a78bfa; }
+    .badge-yellow { background: rgba(234,179,8,0.2); color: #facc15; }
+    .badge-orange { background: rgba(249,115,22,0.2); color: #fb923c; }
     
     @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     .animate-fade-in { animation: fadeIn 0.4s ease forwards; }
@@ -131,6 +131,9 @@
             <button class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left" data-view="chat">
               <span class="text-xl">💬</span><span>Чат</span>
             </button>
+            <button class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left" data-view="schedules">
+              <span class="text-xl">⏰</span><span>Расписание</span>
+            </button>
             <button class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left" data-view="settings">
               <span class="text-xl">⚙️</span><span>Настройки</span>
             </button>
@@ -148,6 +151,10 @@
                 <span class="badge badge-purple" id="statGroups">0</span>
               </div>
               <div class="flex items-center justify-between">
+                <span class="text-slate-400 text-sm">Расписаний</span>
+                <span class="badge badge-orange" id="statSchedules">0</span>
+              </div>
+              <div class="flex items-center justify-between">
                 <span class="text-slate-400 text-sm">Сообщений</span>
                 <span class="badge badge-green" id="statMessages">0</span>
               </div>
@@ -156,7 +163,7 @@
           
           <div class="mt-6 pt-4 border-t border-slate-700/50">
             <p class="text-xs text-slate-500 text-center">HubPro v1.0.0</p>
-            <p class="text-xs text-slate-600 text-center mt-1">NEURAL_ARCHITECT_PREMIUM++</p>
+            <p class="text-xs text-slate-600 text-center mt-1">🔒 Шифрование AES-256</p>
           </div>
         </aside>
         
@@ -164,7 +171,7 @@
         <main class="flex-1" id="mainContent">
           <!-- Dashboard -->
           <div id="view-dashboard" class="view-content">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
               <div class="stat-card p-6">
                 <div class="flex items-center gap-4">
                   <div class="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center text-2xl">🤖</div>
@@ -180,6 +187,15 @@
                   <div>
                     <p class="text-slate-400 text-sm">Групп</p>
                     <p class="text-3xl font-bold text-white" id="dashGroups">0</p>
+                  </div>
+                </div>
+              </div>
+              <div class="stat-card p-6">
+                <div class="flex items-center gap-4">
+                  <div class="w-12 h-12 bg-orange-500/20 rounded-xl flex items-center justify-center text-2xl">⏰</div>
+                  <div>
+                    <p class="text-slate-400 text-sm">Расписаний</p>
+                    <p class="text-3xl font-bold text-white" id="dashSchedules">0</p>
                   </div>
                 </div>
               </div>
@@ -203,6 +219,9 @@
                 <button onclick="openAddGroupModal()" class="btn px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 rounded-xl font-medium text-white shadow-lg shadow-purple-500/20">
                   ➕ Добавить группу
                 </button>
+                <button onclick="openAddScheduleModal()" class="btn px-6 py-3 bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-500 hover:to-orange-400 rounded-xl font-medium text-white shadow-lg shadow-orange-500/20">
+                  ⏰ Создать расписание
+                </button>
               </div>
             </div>
           </div>
@@ -216,7 +235,6 @@
                   ➕ Добавить бота
                 </button>
               </div>
-              
               <div id="botsList"></div>
             </div>
           </div>
@@ -230,7 +248,6 @@
                   ➕ Добавить группу
                 </button>
               </div>
-              
               <div id="groupsList"></div>
             </div>
           </div>
@@ -273,6 +290,19 @@
             </div>
           </div>
           
+          <!-- Schedules View -->
+          <div id="view-schedules" class="view-content hidden">
+            <div class="glass-card p-6 mb-6">
+              <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+                <h2 class="text-xl font-semibold section-title">⏰ Расписание сообщений</h2>
+                <button onclick="openAddScheduleModal()" class="btn px-6 py-3 bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-500 hover:to-orange-400 rounded-xl font-medium text-white shadow-lg shadow-orange-500/20">
+                  ➕ Создать расписание
+                </button>
+              </div>
+              <div id="schedulesList"></div>
+            </div>
+          </div>
+          
           <!-- Settings View -->
           <div id="view-settings" class="view-content hidden">
             <div class="glass-card p-6 mb-6">
@@ -287,6 +317,15 @@
             </div>
             
             <div class="glass-card p-6">
+              <h2 class="text-xl font-semibold section-title mb-6">🔒 Безопасность</h2>
+              <div class="space-y-3 text-slate-400">
+                <p class="flex items-center gap-2"><span class="text-green-400">✅</span> Токены шифруются AES-256-CBC</p>
+                <p class="flex items-center gap-2"><span class="text-green-400">✅</span> Ключ генерируется из userData</p>
+                <p class="flex items-center gap-2"><span class="text-green-400">✅</span> Context Isolation включён</p>
+              </div>
+            </div>
+            
+            <div class="glass-card p-6 mt-6">
               <h2 class="text-xl font-semibold section-title mb-6">ℹ️ О приложении</h2>
               <div class="space-y-3 text-slate-400">
                 <p><strong class="text-white">Версия:</strong> 1.0.0</p>
@@ -321,6 +360,7 @@
     let currentView = 'dashboard';
     let bots = [];
     let groups = [];
+    let schedules = [];
     let currentChatGroup = null;
     let messages = {};
     
@@ -330,6 +370,7 @@
         renderView();
         setupNavigation();
         window.electronAPI.onTelegramUpdate(handleIncomingMessage);
+        window.electronAPI.onScheduleExecuted(handleScheduleExecuted);
         window.electronAPI.onUpdateAvailable(() => showToast('📥 Доступно обновление...', 'info'));
         window.electronAPI.onUpdateDownloaded(() => showToast('✅ Обновление загружено!', 'success'));
       } catch (err) {
@@ -340,12 +381,17 @@
     async function loadData() {
       bots = await window.electronAPI.getBots();
       groups = await window.electronAPI.getGroups();
+      schedules = await window.electronAPI.getSchedules();
       const stats = await window.electronAPI.getStats();
+      
       document.getElementById('statBots').textContent = stats.botCount;
       document.getElementById('statGroups').textContent = stats.groupCount;
+      document.getElementById('statSchedules').textContent = stats.scheduleCount;
       document.getElementById('statMessages').textContent = stats.messageCount;
+      
       document.getElementById('dashBots').textContent = bots.length;
       document.getElementById('dashGroups').textContent = groups.length;
+      document.getElementById('dashSchedules').textContent = schedules.length;
       document.getElementById('dashMessages').textContent = stats.messageCount;
     }
     
@@ -374,6 +420,7 @@
         case 'bots': renderBots(); break;
         case 'groups': renderGroups(); break;
         case 'chat': renderChatList(); break;
+        case 'schedules': renderSchedules(); break;
       }
     }
     
@@ -442,6 +489,39 @@
       `;
     }
     
+    function renderSchedules() {
+      const container = document.getElementById('schedulesList');
+      if (schedules.length === 0) {
+        container.innerHTML = `<div class="text-center py-12 text-slate-500"><div class="text-5xl mb-4">⏰</div><p>Нет запланированных сообщений</p></div>`;
+        return;
+      }
+      container.innerHTML = `
+        <table class="w-full">
+          <thead><tr><th class="text-left">ID</th><th class="text-left">Название</th><th class="text-left">Группа</th><th class="text-left">Время</th><th class="text-left">Повтор</th><th class="text-left">Статус</th><th class="text-left">Действия</th></tr></thead>
+          <tbody>
+            ${schedules.map(s => `
+              <tr>
+                <td><code class="text-orange-400">${s.id}</code></td>
+                <td class="font-medium">${escapeHtml(s.name)}</td>
+                <td>${escapeHtml(s.group_name || '-')}</td>
+                <td><code class="text-slate-400">${s.scheduled_time}</code></td>
+                <td><span class="badge ${s.repeat_type === 'once' ? 'badge-blue' : s.repeat_type === 'daily' ? 'badge-green' : s.repeat_type === 'weekly' ? 'badge-purple' : 'badge-yellow'}">${s.repeat_type === 'once' ? 'Один раз' : s.repeat_type === 'daily' ? 'Ежедневно' : s.repeat_type === 'weekly' ? 'Еженедельно' : 'Ежемесячно'}</span></td>
+                <td><span class="badge ${s.status === 'active' ? 'badge-green' : 'badge-red'}">${s.status === 'active' ? 'Активно' : 'Приостановлено'}</span></td>
+                <td>
+                  <div class="flex gap-2">
+                    <button onclick="toggleSchedule(${s.id}, '${s.status === 'active' ? 'paused' : 'active'}')" class="btn px-3 py-1.5 ${s.status === 'active' ? 'bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400' : 'bg-green-500/20 hover:bg-green-500/30 text-green-400'} rounded-lg text-sm">
+                      ${s.status === 'active' ? '⏸' : '▶️'}
+                    </button>
+                    <button onclick="deleteSchedule(${s.id})" class="btn px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm">🗑️</button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+    
     function renderChatList() {
       const container = document.getElementById('chatGroupsList');
       if (groups.length === 0) {
@@ -489,7 +569,7 @@
         <div class="message ${m.sent ? 'sent' : 'received'}">
           ${!m.sent && m.sender ? `<div class="text-xs opacity-70 mb-1">👤 ${escapeHtml(m.sender)}</div>` : ''}
           <div>${escapeHtml(m.text)}</div>
-          <div class="text-xs opacity-60 mt-1">${new Date(m.time).toLocaleTimeString()}</div>
+          <div class="text-xs opacity-60 mt-1">${new Date(m.time).toLocaleString()}</div>
         </div>
       `).join('');
       container.scrollTop = container.scrollHeight;
@@ -525,7 +605,16 @@
       loadData();
     }
     
-    // Modal functions
+    function handleScheduleExecuted(data) {
+      if (data.success) {
+        showToast('✅ Автосообщение отправлено!');
+      } else {
+        showToast('❌ Ошибка автоотправки: ' + data.error, 'error');
+      }
+      loadData();
+    }
+    
+    // ============ MODAL FUNCTIONS ============
     function openAddBotModal() {
       document.getElementById('modalTitle').textContent = '🤖 Добавить бота';
       document.getElementById('modalBody').innerHTML = `
@@ -538,6 +627,7 @@
             <label class="block text-sm text-slate-400 mb-2">Telegram токен</label>
             <input type="text" id="botToken" class="input-field w-full" placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz">
           </div>
+          <p class="text-xs text-slate-500">🔒 Токен будет зашифрован AES-256</p>
           <p class="text-xs text-slate-500">Получить токен: @BotFather → /newbot</p>
         </div>
       `;
@@ -556,7 +646,7 @@
       
       const result = await window.electronAPI.addBot({ name, token });
       if (result.success) {
-        showToast('✅ Бот добавлен!');
+        showToast('✅ Бот добавлен и зашифрован!');
         closeModal();
         await loadData();
         renderBots();
@@ -609,6 +699,85 @@
       }
     }
     
+    function openAddScheduleModal() {
+      if (bots.length === 0 || groups.length === 0) return showToast('Сначала добавьте бота и группу', 'error');
+      
+      const now = new Date();
+      const defaultDate = now.toISOString().split('T')[0];
+      const defaultTime = now.toTimeString().slice(0, 5);
+      
+      document.getElementById('modalTitle').textContent = '⏰ Создать расписание';
+      document.getElementById('modalBody').innerHTML = `
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm text-slate-400 mb-2">Название</label>
+            <input type="text" id="scheduleName" class="input-field w-full" placeholder="Ежедневная рассылка">
+          </div>
+          <div>
+            <label class="block text-sm text-slate-400 mb-2">Сообщение</label>
+            <textarea id="scheduleText" class="input-field w-full h-24" placeholder="Текст сообщения..."></textarea>
+          </div>
+          <div>
+            <label class="block text-sm text-slate-400 mb-2">Группа</label>
+            <select id="scheduleGroupId" class="input-field w-full">
+              ${groups.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm text-slate-400 mb-2">Бот</label>
+            <select id="scheduleBotId" class="input-field w-full">
+              ${bots.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm text-slate-400 mb-2">Дата</label>
+              <input type="date" id="scheduleDate" class="input-field w-full" value="${defaultDate}">
+            </div>
+            <div>
+              <label class="block text-sm text-slate-400 mb-2">Время</label>
+              <input type="time" id="scheduleTime" class="input-field w-full" value="${defaultTime}">
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm text-slate-400 mb-2">Повтор</label>
+            <select id="scheduleRepeat" class="input-field w-full">
+              <option value="once">Один раз</option>
+              <option value="daily">Ежедневно</option>
+              <option value="weekly">Еженедельно</option>
+              <option value="monthly">Ежемесячно</option>
+            </select>
+          </div>
+        </div>
+      `;
+      document.getElementById('modalSaveBtn').onclick = saveSchedule;
+      openModal();
+    }
+    
+    async function saveSchedule() {
+      const name = document.getElementById('scheduleName').value.trim();
+      const text = document.getElementById('scheduleText').value.trim();
+      const groupId = parseInt(document.getElementById('scheduleGroupId').value);
+      const botId = parseInt(document.getElementById('scheduleBotId').value);
+      const date = document.getElementById('scheduleDate').value;
+      const time = document.getElementById('scheduleTime').value;
+      const repeatType = document.getElementById('scheduleRepeat').value;
+      
+      if (!name || !text) return showToast('Заполните все поля', 'error');
+      
+      const scheduledTime = `${date}T${time}`;
+      const result = await window.electronAPI.addSchedule({ name, text, groupId, botId, scheduledTime, repeatType });
+      
+      if (result.success) {
+        showToast('✅ Расписание создано!');
+        closeModal();
+        await loadData();
+        renderSchedules();
+      } else {
+        showToast('❌ ' + result.error, 'error');
+      }
+    }
+    
     function openModal() {
       document.getElementById('modal').classList.remove('hidden');
       document.getElementById('modal').classList.add('flex');
@@ -644,6 +813,21 @@
       renderGroups();
       renderChatList();
       showToast('🗑️ Группа удалена');
+    }
+    
+    async function toggleSchedule(id, status) {
+      await window.electronAPI.toggleSchedule({ id, status });
+      await loadData();
+      renderSchedules();
+      showToast(status === 'active' ? '✅ Расписание активировано' : '⏸ Расписание приостановлено');
+    }
+    
+    async function deleteSchedule(id) {
+      if (!confirm('Удалить расписание?')) return;
+      await window.electronAPI.deleteSchedule(id);
+      await loadData();
+      renderSchedules();
+      showToast('🗑️ Расписание удалено');
     }
     
     function showToast(message, type = 'success') {
