@@ -39,6 +39,10 @@ function decrypt(text) {
   }
 }
 
+function hashPassword(password) {
+  return crypto.createHash('sha256').update(password).digest('hex');
+}
+
 // ============ БАЗА ДАННЫХ ============
 function initDatabase() {
   const Database = require('better-sqlite3');
@@ -48,6 +52,14 @@ function initDatabase() {
   db = new Database(dbPath);
   
   db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      login TEXT NOT NULL UNIQUE,
+      password TEXT NOT NULL,
+      role TEXT DEFAULT 'user',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    
     CREATE TABLE IF NOT EXISTS bots (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -96,7 +108,16 @@ function initDatabase() {
     );
   `);
   
+  // Создаём админа если нет
+  const adminExists = db.prepare('SELECT COUNT(*) as count FROM users WHERE role = "admin"').get();
+  if (adminExists.count === 0) {
+    const hashedPassword = hashPassword('0901Admin');
+    db.prepare('INSERT INTO users (login, password, role) VALUES (?, ?, ?)').run('NeuralAP', hashedPassword, 'admin');
+    console.log('Admin created: NeuralAP / 0901Admin');
+  }
+  
   console.log('Database initialized at:', dbPath);
+  console.log('Data stored at:', userDataPath);
   return db;
 }
 
@@ -114,10 +135,42 @@ app.whenReady().then(async () => {
   
   // ============ IPC ОБРАБОТЧИКИ ============
   
+  // АВТОРИЗАЦИЯ
+  ipcMain.handle('auth:login', (_, { login, password }) => {
+    const hashedPassword = hashPassword(password);
+    const user = db.prepare('SELECT * FROM users WHERE login = ? AND password = ?').get(login, hashedPassword);
+    if (user) {
+      return { success: true, user: { id: user.id, login: user.login, role: user.role } };
+    }
+    return { success: false, error: 'Неверный логин или пароль' };
+  });
+  
+  ipcMain.handle('auth:register', (_, { login, password }) => {
+    try {
+      const hashedPassword = hashPassword(password);
+      const stmt = db.prepare('INSERT INTO users (login, password, role) VALUES (?, ?, ?)');
+      const result = stmt.run(login, hashedPassword, 'user');
+      return { success: true, id: result.lastInsertRowid };
+    } catch (err) {
+      return { success: false, error: err.message.includes('UNIQUE') ? 'Логин уже занят' : err.message };
+    }
+  });
+  
+  ipcMain.handle('auth:getUsers', () => {
+    return db.prepare('SELECT id, login, role, created_at FROM users ORDER BY id').all();
+  });
+  
+  ipcMain.handle('auth:requestDelete', (_, { userId, reason }) => {
+    const user = db.prepare('SELECT login FROM users WHERE id = ?').get(userId);
+    if (!user) return { success: false, error: 'Пользователь не найден' };
+    console.log(`Delete request for user ${user.login}: ${reason}`);
+    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    return { success: true };
+  });
+  
   // БОТЫ
   ipcMain.handle('db:getBots', () => {
     const bots = db.prepare('SELECT * FROM bots ORDER BY id').all();
-    // Расшифровываем токены для отображения
     return bots.map(b => ({ ...b, token: decrypt(b.token) }));
   });
   
@@ -235,7 +288,8 @@ app.whenReady().then(async () => {
     const groupCount = db.prepare('SELECT COUNT(*) as count FROM groups').get().count;
     const messageCount = db.prepare('SELECT COUNT(*) as count FROM messages').get().count;
     const scheduleCount = db.prepare('SELECT COUNT(*) as count FROM schedules').get().count;
-    return { botCount, groupCount, messageCount, scheduleCount };
+    const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
+    return { botCount, groupCount, messageCount, scheduleCount, userCount };
   });
   
   // СИНХРОНИЗАЦИЯ POLLING
@@ -356,22 +410,19 @@ function syncPolling(bots, groups) {
 
 // ============ РАСПИСАНИЕ ============
 function startScheduleChecker() {
-  // Очищаем старые интервалы
   scheduleIntervals.forEach(id => clearInterval(id));
   scheduleIntervals = [];
   
-  // Проверяем каждую секунду
   const intervalId = setInterval(async () => {
     try {
       const now = new Date();
-      const currentTime = now.toTimeString().slice(0, 5); // HH:MM
-      const currentDate = now.toISOString().split('T')[0]; // YYYY-MM-DD
+      const currentTime = now.toTimeString().slice(0, 5);
+      const currentDate = now.toISOString().split('T')[0];
       
       const schedules = db.prepare("SELECT * FROM schedules WHERE status = 'active'").all();
       
       for (const schedule of schedules) {
         const shouldExecute = checkScheduleTime(schedule, currentTime, currentDate, now);
-        
         if (shouldExecute) {
           await executeSchedule(schedule);
         }
@@ -386,18 +437,12 @@ function startScheduleChecker() {
 
 function checkScheduleTime(schedule, currentTime, currentDate, now) {
   const scheduledTime = schedule.scheduled_time;
-  
-  // Проверяем время
   if (currentTime !== scheduledTime.slice(0, 5)) return false;
   
-  // Проверяем дату для повторяющихся
   if (schedule.repeat_type === 'once') {
-    // Для одноразовых - проверяем дату
     return schedule.scheduled_time.startsWith(currentDate);
   }
   
-  // Для повторяющихся
-  const scheduleDate = new Date(schedule.scheduled_time);
   const lastExecuted = schedule.last_executed ? new Date(schedule.last_executed) : null;
   
   switch (schedule.repeat_type) {
@@ -435,15 +480,10 @@ async function executeSchedule(schedule) {
     const result = await res.json();
     
     if (result.ok) {
-      // Сохраняем сообщение
       db.prepare('INSERT INTO messages (group_id, text, sent, sender) VALUES (?, ?, 1, ?)').run(
         group.id, schedule.text, 'HubPro (авто)'
       );
-      
-      // Обновляем last_executed
       db.prepare('UPDATE schedules SET last_executed = ? WHERE id = ?').run(new Date().toISOString(), schedule.id);
-      
-      // Уведомляем UI
       win.webContents.send('tg:scheduleExecuted', { scheduleId: schedule.id, success: true });
       console.log(`Schedule ${schedule.id} executed successfully`);
     } else {
