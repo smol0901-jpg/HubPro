@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HubPro — Управление Telegram ботами</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1a1a2e; color: #eee; height: 100vh; overflow: hidden; }
+    
+    .app { display: flex; height: 100vh; }
+    
+    /* Sidebar */
+    .sidebar { width: 280px; background: #16213e; padding: 20px; display: flex; flex-direction: column; border-right: 1px solid #0f3460; }
+    .logo { font-size: 24px; font-weight: bold; color: #e94560; margin-bottom: 30px; text-align: center; }
+    .nav-btn { padding: 12px 16px; margin-bottom: 8px; background: transparent; border: none; color: #aaa; cursor: pointer; text-align: left; border-radius: 8px; transition: 0.3s; font-size: 14px; display: flex; align-items: center; gap: 10px; }
+    .nav-btn:hover, .nav-btn.active { background: #0f3460; color: #fff; }
+    .nav-btn.active { border-left: 3px solid #e94560; }
+    
+    /* Stats */
+    .stats { margin-top: auto; padding: 15px; background: #0f3460; border-radius: 10px; }
+    .stats h3 { font-size: 14px; color: #888; margin-bottom: 10px; }
+    .stat-item { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 14px; }
+    .stat-value { color: #e94560; font-weight: bold; }
+    
+    /* Main content */
+    .main { flex: 1; display: flex; flex-direction: column; }
+    .header { padding: 20px 30px; background: #16213e; border-bottom: 1px solid #0f3460; display: flex; justify-content: space-between; align-items: center; }
+    .header h1 { font-size: 22px; }
+    .content { flex: 1; padding: 30px; overflow-y: auto; }
+    
+    /* Cards */
+    .card { background: #16213e; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+    .card h2 { font-size: 18px; margin-bottom: 15px; color: #e94560; display: flex; align-items: center; gap: 10px; }
+    
+    /* Forms */
+    .form-group { margin-bottom: 15px; }
+    .form-group label { display: block; margin-bottom: 5px; color: #aaa; font-size: 14px; }
+    .form-group input, .form-group select { width: 100%; padding: 10px 15px; background: #0f3460; border: 1px solid #1a1a2e; border-radius: 8px; color: #fff; font-size: 14px; transition: 0.3s; }
+    .form-group input:focus, .form-group select:focus { outline: none; border-color: #e94560; }
+    .form-group input::placeholder { color: #666; }
+    
+    .btn { padding: 10px 20px; background: #e94560; border: none; color: #fff; border-radius: 8px; cursor: pointer; font-size: 14px; transition: 0.3s; display: inline-flex; align-items: center; gap: 8px; }
+    .btn:hover { background: #ff6b6b; transform: translateY(-2px); }
+    .btn:active { transform: translateY(0); }
+    .btn-secondary { background: #0f3460; }
+    .btn-secondary:hover { background: #1a4a7a; }
+    .btn-danger { background: #dc3545; }
+    .btn-danger:hover { background: #c82333; }
+    .btn-success { background: #28a745; }
+    .btn-success:hover { background: #218838; }
+    .btn-sm { padding: 6px 12px; font-size: 12px; }
+    .btn-block { display: block; width: 100%; justify-content: center; }
+    
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #0f3460; }
+    th { color: #888; font-weight: 500; font-size: 14px; background: #0f3460; }
+    tr:hover { background: rgba(233, 69, 96, 0.1); }
+    .status-online { color: #28a745; }
+    .status-offline { color: #dc3545; }
+    
+    /* Chat */
+    .chat-container { display: flex; height: calc(100vh - 80px); border-radius: 12px; overflow: hidden; background: #16213e; }
+    .chat-list { width: 300px; background: #0f3460; overflow-y: auto; }
+    .chat-item { padding: 15px; cursor: pointer; border-bottom: 1px solid #16213e; transition: 0.3s; }
+    .chat-item:hover { background: #16213e; }
+    .chat-item.active { background: #16213e; border-left: 3px solid #e94560; }
+    .chat-item h4 { margin-bottom: 5px; font-size: 14px; }
+    .chat-item p { font-size: 12px; color: #888; }
+    .chat-item .badge { font-size: 10px; background: #e94560; padding: 2px 6px; border-radius: 10px; }
+    
+    .chat-main { flex: 1; display: flex; flex-direction: column; }
+    .chat-header { padding: 15px 20px; background: #16213e; border-bottom: 1px solid #0f3460; display: flex; justify-content: space-between; align-items: center; }
+    .chat-messages { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+    .message { max-width: 70%; padding: 10px 15px; border-radius: 15px; position: relative; }
+    .message.sent { align-self: flex-end; background: #e94560; border-bottom-right-radius: 2px; }
+    .message.received { align-self: flex-start; background: #0f3460; border-bottom-left-radius: 2px; }
+    .message-text { font-size: 14px; word-wrap: break-word; }
+    .message-meta { font-size: 10px; opacity: 0.7; margin-top: 5px; display: flex; gap: 10px; }
+    .message-sender { font-size: 11px; color: #e94560; margin-bottom: 3px; font-weight: 500; }
+    
+    .chat-input-area { padding: 15px 20px; background: #16213e; border-top: 1px solid #0f3460; display: flex; gap: 10px; }
+    .chat-input-area input { flex: 1; padding: 12px 15px; background: #0f3460; border: none; border-radius: 8px; color: #fff; font-size: 14px; }
+    .chat-input-area input:focus { outline: 2px solid #e94560; }
+    
+    /* Toast */
+    .toast { position: fixed; bottom: 20px; right: 20px; padding: 15px 20px; background: #28a745; color: #fff; border-radius: 8px; animation: slideIn 0.3s ease; z-index: 1000; font-size: 14px; display: flex; align-items: center; gap: 10px; }
+    .toast.error { background: #dc3545; }
+    .toast.info { background: #17a2b8; }
+    @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    
+    /* Modal */
+    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; }
+    .modal.active { display: flex; align-items: center; justify-content: center; }
+    .modal-content { background: #16213e; padding: 30px; border-radius: 12px; width: 450px; max-width: 90%; animation: modalIn 0.3s ease; }
+    @keyframes modalIn { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    .modal h2 { margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+    .modal-actions { display: flex; gap: 10px; margin-top: 20px; }
+    .modal-close { position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 20px; cursor: pointer; }
+    
+    /* Empty state */
+    .empty-state { text-align: center; padding: 50px; color: #888; }
+    .empty-state h3 { margin-bottom: 10px; font-size: 18px; }
+    .empty-state p { margin-bottom: 20px; }
+    .empty-state-icon { font-size: 48px; margin-bottom: 15px; }
+    
+    /* Grid stats */
+    .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    .stat-card { background: #0f3460; border-radius: 12px; padding: 25px; text-align: center; transition: 0.3s; }
+    .stat-card:hover { transform: translateY(-5px); }
+    .stat-card-icon { font-size: 32px; margin-bottom: 10px; }
+    .stat-card-value { font-size: 36px; font-weight: bold; color: #e94560; }
+    .stat-card-label { font-size: 14px; color: #888; margin-top: 5px; }
+    
+    /* Actions row */
+    .actions-row { display: flex; gap: 10px; margin-top: 15px; }
+    
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: #1a1a2e; }
+    ::-webkit-scrollbar-thumb { background: #0f3460; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #e94560; }
+    
+    /* Loading */
+    .loading { display: flex; align-items: center; justify-content: center; padding: 50px; }
+    .spinner { width: 40px; height: 40px; border: 3px solid #0f3460; border-top-color: #e94560; border-radius: 50%; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="sidebar">
+      <div class="logo">🤖 HubPro</div>
+      <button class="nav-btn active" data-view="dashboard">📊 Дашборд</button>
+      <button class="nav-btn" data-view="bots">🤖 Боты</button>
+      <button class="nav-btn" data-view="groups">👥 Группы</button>
+      <button class="nav-btn" data-view="chat">💬 Чат</button>
+      <button class="nav-btn" data-view="settings">⚙️ Настройки</button>
+      
+      <div class="stats">
+        <h3>📈 Статистика</h3>
+        <div class="stat-item"><span>Ботов:</span><span class="stat-value" id="statBots">0</span></div>
+        <div class="stat-item"><span>Групп:</span><span class="stat-value" id="statGroups">0</span></div>
+        <div class="stat-item"><span>Сообщений:</span><span class="stat-value" id="statMessages">0</span></div>
+      </div>
+    </div>
+    
+    <div class="main">
+      <div class="header">
+        <h1 id="pageTitle">Дашборд</h1>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <span id="version" style="color: #888; font-size: 12px;">v1.0.0</span>
+          <button class="btn btn-sm" onclick="checkForUpdates()">🔄 Обновления</button>
+        </div>
+      </div>
+      
+      <div class="content" id="content">
+        <div class="loading"><div class="spinner"></div></div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Modal -->
+  <div class="modal" id="modal">
+    <div class="modal-content">
+      <h2 id="modalTitle">Добавить</h2>
+      <div id="modalBody"></div>
+      <div class="modal-actions">
+        <button class="btn" id="modalSave">💾 Сохранить</button>
+        <button class="btn btn-secondary" onclick="closeModal()">Отмена</button>
+      </div>
+    </div>
+  </div>
+  
+  <script>
+    let currentView = 'dashboard';
+    let bots = [];
+    let groups = [];
+    let currentChatGroup = null;
+    let messages = {};
+    
+    // Инициализация
+    document.addEventListener('DOMContentLoaded', async () => {
+      try {
+        await loadData();
+        renderView();
+        setupEventListeners();
+        window.electronAPI.onTelegramUpdate(handleIncomingMessage);
+        window.electronAPI.onUpdateAvailable(() => showToast('📥 Доступно обновление, загружается...', 'info'));
+        window.electronAPI.onUpdateDownloaded(() => showToast('✅ Обновление загружено, перезапуск...', 'success'));
+      } catch (err) {
+        showToast('Ошибка загрузки: ' + err.message, 'error');
+      }
+    });
+    
+    async function loadData() {
+      bots = await window.electronAPI.getBots();
+      groups = await window.electronAPI.getGroups();
+      const stats = await window.electronAPI.getStats();
+      document.getElementById('statBots').textContent = stats.botCount;
+      document.getElementById('statGroups').textContent = stats.groupCount;
+      document.getElementById('statMessages').textContent = stats.messageCount;
+    }
+    
+    function setupEventListeners() {
+      document.querySelectorAll('.nav-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          currentView = btn.dataset.view;
+          document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          renderView();
+        });
+      });
+      
+      document.getElementById('modal').addEventListener('click', (e) => {
+        if (e.target.id === 'modal') closeModal();
+      });
+    }
+    
+    function renderView() {
+      const content = document.getElementById('content');
+      const titles = { dashboard: '📊 Дашборд', bots: '🤖 Управление ботами', groups: '👥 Группы', chat: '💬 Чат', settings: '⚙️ Настройки' };
+      document.getElementById('pageTitle').textContent = titles[currentView];
+      
+      switch(currentView) {
+        case 'dashboard': renderDashboard(content); break;
+        case 'bots': renderBots(content); break;
+        case 'groups': renderGroups(content); break;
+        case 'chat': renderChat(content); break;
+        case 'settings': renderSettings(content); break;
+      }
+    }
+    
+    function renderDashboard(container) {
+      container.innerHTML = `
+        <div class="card">
+          <h2>👋 Добро пожаловать в HubPro!</h2>
+          <p style="color: #aaa; margin-top: 10px;">Управляйте Telegram ботами и группами в одном удобном приложении.</p>
+        </div>
+        
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-card-icon">🤖</div>
+            <div class="stat-card-value">${bots.length}</div>
+            <div class="stat-card-label">Ботов</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-icon">👥</div>
+            <div class="stat-card-value">${groups.length}</div>
+            <div class="stat-card-label">Групп</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-icon">💬</div>
+            <div class="stat-card-value">${document.getElementById('statMessages').textContent}</div>
+            <div class="stat-card-label">Сообщений</div>
+          </div>
+        </div>
+        
+        <div class="card" style="margin-top: 20px;">
+          <h2>🚀 Быстрые действия</h2>
+          <div style="display: flex; gap: 10px; margin-top: 15px;">
+            <button class="btn" onclick="document.querySelector('[data-view=bots]').click(); openAddBotModal();">
+              ➕ Добавить бота
+            </button>
+            <button class="btn btn-secondary" onclick="document.querySelector('[data-view=groups]').click(); openAddGroupModal();">
+              ➕ Добавить группу
+            </button>
+          </div>
+        </div>
+        
+        <div class="card" style="margin-top: 20px;">
+          <h2>📋 Последние боты</h2>
+          ${bots.length === 0 ? '<div class="empty-state"><p>Нет добавленных ботов</p></div>' : `
+          <table>
+            <thead><tr><th>Имя</th><th>Статус</th><th>Действия</th></tr></thead>
+            <tbody>
+              ${bots.slice(0, 5).map(bot => `
+                <tr>
+                  <td>${bot.name}</td>
+                  <td><span class="${bot.online ? 'status-online' : 'status-offline'}">${bot.online ? '🟢 Онлайн' : '🔴 Оффлайн'}</span></td>
+                  <td>
+                    <button class="btn btn-sm ${bot.online ? 'btn-danger' : 'btn-success'}" onclick="toggleBotOnline(${bot.id}, ${!bot.online})">
+                      ${bot.online ? '⏸ Выключить' : '▶️ Включить'}
+                    </button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          `}
+        </div>
+      `;
+    }
+    
+    function renderBots(container) {
+      container.innerHTML = `
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h2>🤖 Список ботов</h2>
+            <button class="btn" onclick="openAddBotModal()">➕ Добавить бота</button>
+          </div>
+          
+          ${bots.length === 0 ? `
+            <div class="empty-state">
+              <div class="empty-state-icon">🤖</div>
+              <h3>Нет ботов</h3>
+              <p>Добавьте первого Telegram бота для начала работы</p>
+              <button class="btn" onclick="openAddBotModal()">➕ Добавить бота</button>
+            </div>
+          ` : `
+          <table>
+            <thead><tr><th>ID</th><th>Имя</th><th>Токен</th><th>Статус</th><th>Действия</th></tr></thead>
+            <tbody>
+              ${bots.map(bot => `
+                <tr>
+                  <td><code>${bot.id}</code></td>
+                  <td><strong>${bot.name}</strong></td>
+                  <td><code style="color: #888;">${bot.token.substring(0, 25)}...</code></td>
+                  <td><span class="${bot.online ? 'status-online' : 'status-offline'}">${bot.online ? '🟢 Онлайн' : '🔴 Оффлайн'}</span></td>
+                  <td>
+                    <button class="btn btn-sm ${bot.online ? 'btn-danger' : 'btn-success'}" onclick="toggleBotOnline(${bot.id}, ${!bot.online})">
+                      ${bot.online ? '⏸' : '▶️'} ${bot.online ? 'Выключить' : 'Включить'}
+                    </button>
+                    <button class="btn btn-sm btn-secondary" onclick="openEditBotModal(${bot.id})">✏️</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteBot(${bot.id})">🗑️</button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          `}
+        </div>
+      `;
+    }
+    
+    function renderGroups(container) {
+      container.innerHTML = `
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h2>👥 Группы</h2>
+            <button class="btn" onclick="openAddGroupModal()">➕ Добавить группу</button>
+          </div>
+          
+          ${groups.length === 0 ? `
+            <div class="empty-state">
+              <div class="empty-state-icon">👥</div>
+              <h3>Нет групп</h3>
+              <p>Добавьте группу для отправки сообщений</p>
+              <button class="btn" onclick="openAddGroupModal()">➕ Добавить группу</button>
+            </div>
+          ` : `
+          <table>
+            <thead><tr><th>ID</th><th>Название</th><th>Chat ID</th><th>Бот</th><th>Действия</th></tr></thead>
+            <tbody>
+              ${groups.map(g => `
+                <tr>
+                  <td><code>${g.id}</code></td>
+                  <td><strong>${g.name}</strong></td>
+                  <td><code>${g.chat_id}</code></td>
+                  <td>${g.bot_name || '<span style="color:#dc3545">Не назначен</span>'}</td>
+                  <td>
+                    <button class="btn btn-sm btn-secondary" onclick="openChatToGroup(${g.id})">💬 Чат</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteGroup(${g.id})">🗑️</button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          `}
+        </div>
+      `;
+    }
+    
+    function renderChat(container) {
+      container.innerHTML = `
+        <div class="chat-container">
+          <div class="chat-list">
+            <div style="padding: 15px; background: #16213e; border-bottom: 1px solid #0f3460;">
+              <strong>💬 Выберите чат</strong>
+            </div>
+            ${groups.length === 0 ? `
+              <div class="empty-state">
+                <h3>Нет групп</h3>
+                <p>Добавьте группу</p>
+              </div>
+            ` : groups.map(g => {
+              const msgCount = messages[g.id] ? messages[g.id].length : 0;
+              return `
+              <div class="chat-item ${currentChatGroup === g.id ? 'active' : ''}" onclick="selectChat(${g.id}, '${g.name}')">
+                <h4>${g.name} ${msgCount > 0 ? `<span class="badge">${msgCount}</span>` : ''}</h4>
+                <p>Бот: ${g.bot_name || '-'}</p>
+              </div>
+            `}).join('')}
+          </div>
+          <div class="chat-main">
+            ${currentChatGroup ? `
+              <div class="chat-header">
+                <div>
+                  <strong>${groups.find(g => g.id === currentChatGroup)?.name}</strong>
+                  <span style="color: #888; font-size: 12px; margin-left: 10px;">
+                    ${bots.find(b => b.id === groups.find(g => g.id === currentChatGroup)?.bot_id)?.online ? '🟢' : '🔴'}
+                  </span>
+                </div>
+                <button class="btn btn-sm btn-secondary" onclick="loadChatMessages()">🔄 Обновить</button>
+              </div>
+              <div class="chat-messages" id="chatMessages"></div>
+              <div class="chat-input-area">
+                <input type="text" id="chatInput" placeholder="Введите сообщение..." onkeypress="if(event.key==='Enter')sendMessage()">
+                <button class="btn" onclick="sendMessage()">📤 Отправить</button>
+              </div>
+            ` : `
+              <div class="empty-state" style="height: 100%;">
+                <div class="empty-state-icon">💬</div>
+                <h3>Выберите чат</h3>
+                <p>Выберите группу из списка слева</p>
+              </div>
+            `}
+          </div>
+        </div>
+      `;
+      if (currentChatGroup) loadChatMessages();
+    }
+    
+    function renderSettings(container) {
+      container.innerHTML = `
+        <div class="card">
+          <h2>⚙️ Настройки приложения</h2>
+          <div class="form-group" style="margin-top: 15px;">
+            <label>Интервал опроса (мс)</label>
+            <input type="number" id="settingsPollingInterval" value="3000" min="1000" max="10000">
+          </div>
+          <p style="color: #888; font-size: 12px; margin-top: 5px;">Рекомендуемое значение: 3000 мс</p>
+        </div>
+        
+        <div class="card">
+          <h2>ℹ️ О приложении</h2>
+          <div style="margin-top: 15px;">
+            <p><strong>Версия:</strong> 1.0.0</p>
+            <p style="margin-top: 10px;"><strong>База данных:</strong> SQLite</p>
+            <p style="margin-top: 10px;"><strong>Платформа:</strong> Electron</p>
+          </div>
+        </div>
+        
+        <div class="card">
+          <h2>🗑️ Управление данными</h2>
+          <div style="margin-top: 15px; display: flex; gap: 10px;">
+            <button class="btn btn-danger" onclick="if(confirm('Удалить все сообщения?')) clearMessages()">
+              🗑️ Очистить сообщения
+            </button>
+          </div>
+        </div>
+      `;
+    }
+    
+    async function selectChat(groupId, name) {
+      currentChatGroup = groupId;
+      renderChat(document.getElementById('content'));
+    }
+    
+    async function openChatToGroup(groupId) {
+      document.querySelector('[data-view=chat]').click();
+      await selectChat(groupId, groups.find(g => g.id === groupId)?.name);
+    }
+    
+    async function loadChatMessages() {
+      if (!currentChatGroup) return;
+      const msgs = await window.electronAPI.getMessages(currentChatGroup);
+      messages[currentChatGroup] = msgs;
+      renderMessages(currentChatGroup);
+    }
+    
+    function renderMessages(groupId) {
+      const container = document.getElementById('chatMessages');
+      if (!container || !messages[groupId]) return;
+      
+      container.innerHTML = messages[groupId].map(m => `
+        <div class="message ${m.sent ? 'sent' : 'received'}">
+          ${!m.sent && m.sender ? `<div class="message-sender">👤 ${m.sender}</div>` : ''}
+          <div class="message-text">${escapeHtml(m.text)}</div>
+          <div class="message-meta">
+            <span>${new Date(m.time).toLocaleString()}</span>
+            ${m.sent ? '<span>✓</span>' : ''}
+          </div>
+        </div>
+      `).join('');
+      container.scrollTop = container.scrollHeight;
+    }
+    
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+    
+    async function sendMessage() {
+      const input = document.getElementById('chatInput');
+      const text = input.value.trim();
+      if (!text || !currentChatGroup) return showToast('Введите сообщение', 'error');
+      
+      const group = groups.find(g => g.id === currentChatGroup);
+      const bot = bots.find(b => b.id === group?.bot_id);
+      if (!bot) return showToast('Бот не назначен', 'error');
+      if (!bot.online) return showToast('Бот оффлайн', 'error');
+      
+      try {
+        const result = await window.electronAPI.sendTelegramMessage({ token: bot.token, chatId: group.chat_id, text });
+        if (!result.ok) throw new Error(result.description || 'Ошибка API');
+        
+        await window.electronAPI.addMessage({ groupId: currentChatGroup, text, sent: true });
+        await loadChatMessages();
+        input.value = '';
+        showToast('✅ Сообщение отправлено!');
+      } catch (err) {
+        showToast('❌ Ошибка: ' + err.message, 'error');
+      }
+    }
+    
+    function handleIncomingMessage(data) {
+      if (!messages[data.groupId]) messages[data.groupId] = [];
+      messages[data.groupId].push({ text: data.text, sent: false, sender: data.sender, time: data.time });
+      if (currentChatGroup === data.groupId) renderMessages(data.groupId);
+      loadData(); // Обновляем статистику
+    }
+    
+    // Modal функции
+    function openAddBotModal() {
+      document.getElementById('modalTitle').innerHTML = '🤖 Добавить бота';
+      document.getElementById('modalBody').innerHTML = `
+        <div class="form-group">
+          <label>📛 Имя бота</label>
+          <input type="text" id="botName" placeholder="Мой бот">
+        </div>
+        <div class="form-group">
+          <label>🔑 Telegram токен</label>
+          <input type="text" id="botToken" placeholder="1234567890:ABCdefGHIjklMNOpqrsTUVwxyz">
+        </div>
+        <p style="color: #888; font-size: 12px; margin-top: 10px;">
+          Получить токен: @BotFather → /newbot
+        </p>
+      `;
+      document.getElementById('modalSave').onclick = saveBot;
+      document.getElementById('modal').classList.add('active');
+    }
+    
+    async function saveBot() {
+      const name = document.getElementById('botName').value.trim();
+      const token = document.getElementById('botToken').value.trim();
+      if (!name || !token) return showToast('Заполните все поля', 'error');
+      
+      showToast('⏳ Проверка токена...', 'info');
+      const check = await window.electronAPI.checkBot(token);
+      if (!check.ok) return showToast('❌ Неверный токен бота', 'error');
+      
+      const result = await window.electronAPI.addBot({ name, token });
+      if (result.success) {
+        showToast('✅ Бот добавлен!');
+        closeModal();
+        await loadData();
+        renderView();
+      } else {
+        showToast('❌ ' + result.error, 'error');
+      }
+    }
+    
+    function openEditBotModal(botId) {
+      const bot = bots.find(b => b.id === botId);
+      if (!bot) return;
+      
+      document.getElementById('modalTitle').innerHTML = '✏️ Редактировать бота';
+      document.getElementById('modalBody').innerHTML = `
+        <div class="form-group">
+          <label>📛 Имя бота</label>
+          <input type="text" id="botName" value="${bot.name}">
+        </div>
+        <div class="form-group">
+          <label>🔑 Telegram токен</label>
+          <input type="text" id="botToken" value="${bot.token}">
+        </div>
+      `;
+      document.getElementById('modalSave').onclick = () => saveEditBot(botId);
+      document.getElementById('modal').classList.add('active');
+    }
+    
+    async function saveEditBot(botId) {
+      const name = document.getElementById('botName').value.trim();
+      const token = document.getElementById('botToken').value.trim();
+      const bot = bots.find(b => b.id === botId);
+      if (!name || !token) return showToast('Заполните все поля', 'error');
+      
+      const result = await window.electronAPI.updateBot({ id: botId, name, token, online: bot.online });
+      if (result.success) {
+        showToast('✅ Бот обновлён!');
+        closeModal();
+        await loadData();
+        renderView();
+      } else {
+        showToast('❌ ' + result.error, 'error');
+      }
+    }
+    
+    function openAddGroupModal() {
+      if (bots.length === 0) {
+        showToast('Сначала добавьте бота', 'error');
+        return;
+      }
+      
+      document.getElementById('modalTitle').innerHTML = '👥 Добавить группу';
+      document.getElementById('modalBody').innerHTML = `
+        <div class="form-group">
+          <label>📝 Название</label>
+          <input type="text" id="groupName" placeholder="Моя группа">
+        </div>
+        <div class="form-group">
+          <label>🆔 Chat ID</label>
+          <input type="text" id="groupChatId" placeholder="-123456789">
+        </div>
+        <div class="form-group">
+          <label>🤖 Бот</label>
+          <select id="groupBotId">
+            ${bots.map(b => `<option value="${b.id}">${b.name}</option>`).join('')}
+          </select>
+        </div>
+        <p style="color: #888; font-size: 12px; margin-top: 10px;">
+          Chat ID можно узнать: отправьте сообщение боту и проверьте логи
+        </p>
+      `;
+      document.getElementById('modalSave').onclick = saveGroup;
+      document.getElementById('modal').classList.add('active');
+    }
+    
+    async function saveGroup() {
+      const name = document.getElementById('groupName').value.trim();
+      const chatId = document.getElementById('groupChatId').value.trim();
+      const botId = parseInt(document.getElementById('groupBotId').value);
+      if (!name || !chatId) return showToast('Заполните все поля', 'error');
+      
+      const result = await window.electronAPI.addGroup({ name, chatId, botId });
+      if (result.success) {
+        showToast('✅ Группа добавлена!');
+        closeModal();
+        await loadData();
+        renderView();
+      } else {
+        showToast('❌ ' + result.error, 'error');
+      }
+    }
+    
+    function closeModal() {
+      document.getElementById('modal').classList.remove('active');
+    }
+    
+    async function toggleBotOnline(id, online) {
+      const bot = bots.find(b => b.id === id);
+      await window.electronAPI.updateBot({ id, name: bot.name, token: bot.token, online });
+      await loadData();
+      window.electronAPI.syncBotConfig();
+      renderView();
+      showToast(online ? '✅ Бот включён' : '⏸ Бот выключен');
+    }
+    
+    async function deleteBot(id) {
+      if (!confirm('❓ Удалить бота? Это действие нельзя отменить.')) return;
+      await window.electronAPI.deleteBot(id);
+      await loadData();
+      renderView();
+      showToast('🗑️ Бот удалён');
+    }
+    
+    async function deleteGroup(id) {
+      if (!confirm('❓ Удалить группу?')) return;
+      await window.electronAPI.deleteGroup(id);
+      if (currentChatGroup === id) currentChatGroup = null;
+      await loadData();
+      renderView();
+      showToast('🗑️ Группа удалена');
+    }
+    
+    async function clearMessages() {
+      showToast('Функция очистки в разработке', 'info');
+    }
+    
+    function showToast(message, type = 'success') {
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3000);
+    }
+    
+    async function checkForUpdates() {
+      showToast('⏳ Проверка обновлений...', 'info');
+      await window.electronAPI.checkForUpdates();
+    }
+  </script>
+</body>
+</html>
