@@ -1,5 +1,5 @@
 {
-  "name": "bothub-desktop",
+  "name": "hubpro",
   "version": "1.0.0",
   "main": "main.js",
   "scripts": {
@@ -7,14 +7,17 @@
     "build": "electron-builder -w",
     "publish": "electron-builder -w --publish always"
   },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0"
+  },
   "devDependencies": {
     "electron": "^31.0.0",
     "electron-builder": "^24.13.0",
     "electron-updater": "^6.3.0"
   },
   "build": {
-    "appId": "com.alexsmolyaninov.bothub",
-    "productName": "BotHub",
+    "appId": "com.alexsmolyaninov.hubpro",
+    "productName": "HubPro",
     "win": {
       "target": ["nsis"],
       "icon": "build/icon.ico"
@@ -23,6 +26,10 @@
       "provider": "github",
       "owner": "smol0901-jpg",
       "repo": "HubPro"
-    }
+    },
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**"
+    ]
   }
 }
