@@ -1,0 +1,28 @@
+{
+  "name": "bothub-desktop",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder -w",
+    "publish": "electron-builder -w --publish always"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.0",
+    "electron-updater": "^6.3.0"
+  },
+  "build": {
+    "appId": "com.alexsmolyaninov.bothub",
+    "productName": "BotHub",
+    "win": {
+      "target": ["nsis"],
+      "icon": "build/icon.ico"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "smol0901-jpg",
+      "repo": "HubPro"
+    }
+  }
+}
