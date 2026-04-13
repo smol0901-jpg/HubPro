@@ -83,6 +83,10 @@
     ::-webkit-scrollbar-track { background: rgba(15,23,42,0.5); }
     ::-webkit-scrollbar-thumb { background: rgba(59,130,246,0.3); border-radius: 4px; }
     ::-webkit-scrollbar-thumb:hover { background: rgba(59,130,246,0.5); }
+    
+    /* Login Screen */
+    .login-screen { background: linear-gradient(135deg, #0a0e1a 0%, #1e293b 100%); }
+    .login-card { background: rgba(15,23,42,0.8); border: 1px solid rgba(148,163,184,0.15); border-radius: 24px; backdrop-filter: blur(20px); }
   </style>
 </head>
 <body>
@@ -91,7 +95,35 @@
   <div class="bg-glow bg-glow-2"></div>
   <div class="bg-glow bg-glow-3"></div>
   
-  <div class="app-container p-4 md:p-6">
+  <!-- Login Screen -->
+  <div id="loginScreen" class="login-screen min-h-screen flex items-center justify-center p-4">
+    <div class="login-card p-8 w-full max-w-md animate-fade-in">
+      <div class="text-center mb-8">
+        <div class="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-4 shadow-lg shadow-blue-500/20">🤖</div>
+        <h1 class="text-3xl font-bold bg-gradient-to-r from-blue-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent">HubPro</h1>
+        <p class="text-slate-400 mt-2">Вход в систему</p>
+      </div>
+      
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm text-slate-400 mb-2">Логин</label>
+          <input type="text" id="loginUsername" class="input-field w-full" placeholder="Введите логин">
+        </div>
+        <div>
+          <label class="block text-sm text-slate-400 mb-2">Пароль</label>
+          <input type="password" id="loginPassword" class="input-field w-full" placeholder="Введите пароль" onkeypress="if(event.key==='Enter')doLogin()">
+        </div>
+        <button onclick="doLogin()" class="btn w-full py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 rounded-xl font-medium text-white shadow-lg shadow-purple-500/20">
+          Войти
+        </button>
+      </div>
+      
+      <p class="text-xs text-slate-500 text-center mt-6">🔒 AES-256 шифрование</p>
+    </div>
+  </div>
+  
+  <!-- Main App -->
+  <div id="mainApp" class="app-container p-4 md:p-6 hidden">
     <div class="max-w-7xl mx-auto">
       <!-- Header -->
       <header class="mb-8 animate-fade-in">
@@ -106,10 +138,10 @@
           <div class="flex items-center gap-3">
             <span class="flex items-center gap-2 px-4 py-2 bg-slate-800/80 rounded-xl text-sm border border-slate-700/50">
               <span class="status-dot status-online"></span>
-              <span class="text-slate-300">Система активна</span>
+              <span class="text-slate-300" id="currentUser">Пользователь</span>
             </span>
-            <button onclick="checkForUpdates()" class="btn px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 rounded-xl text-sm font-medium text-white shadow-lg shadow-purple-500/20">
-              🔄 Обновления
+            <button onclick="logout()" class="btn px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-xl text-sm">
+              Выйти
             </button>
           </div>
         </div>
@@ -133,6 +165,9 @@
             </button>
             <button class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left" data-view="schedules">
               <span class="text-xl">⏰</span><span>Расписание</span>
+            </button>
+            <button class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left" data-view="users" id="usersNavBtn">
+              <span class="text-xl">👤</span><span>Пользователи</span>
             </button>
             <button class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left" data-view="settings">
               <span class="text-xl">⚙️</span><span>Настройки</span>
@@ -163,7 +198,7 @@
           
           <div class="mt-6 pt-4 border-t border-slate-700/50">
             <p class="text-xs text-slate-500 text-center">HubPro v1.0.0</p>
-            <p class="text-xs text-slate-600 text-center mt-1">🔒 Шифрование AES-256</p>
+            <p class="text-xs text-slate-600 text-center mt-1">🔒 AES-256 + Login</p>
           </div>
         </aside>
         
@@ -303,6 +338,19 @@
             </div>
           </div>
           
+          <!-- Users View -->
+          <div id="view-users" class="view-content hidden">
+            <div class="glass-card p-6 mb-6">
+              <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+                <h2 class="text-xl font-semibold section-title">👤 Управление пользователями</h2>
+                <button onclick="openAddUserModal()" class="btn px-6 py-3 bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-400 rounded-xl font-medium text-white shadow-lg shadow-green-500/20">
+                  ➕ Добавить пользователя
+                </button>
+              </div>
+              <div id="usersList"></div>
+            </div>
+          </div>
+          
           <!-- Settings View -->
           <div id="view-settings" class="view-content hidden">
             <div class="glass-card p-6 mb-6">
@@ -320,6 +368,7 @@
               <h2 class="text-xl font-semibold section-title mb-6">🔒 Безопасность</h2>
               <div class="space-y-3 text-slate-400">
                 <p class="flex items-center gap-2"><span class="text-green-400">✅</span> Токены шифруются AES-256-CBC</p>
+                <p class="flex items-center gap-2"><span class="text-green-400">✅</span> Пароли хешируются SHA-256</p>
                 <p class="flex items-center gap-2"><span class="text-green-400">✅</span> Ключ генерируется из userData</p>
                 <p class="flex items-center gap-2"><span class="text-green-400">✅</span> Context Isolation включён</p>
               </div>
@@ -361,27 +410,65 @@
     let bots = [];
     let groups = [];
     let schedules = [];
+    let users = [];
     let currentChatGroup = null;
     let messages = {};
+    let currentUser = null;
+    let isAdmin = false;
     
     document.addEventListener('DOMContentLoaded', async () => {
-      try {
+      window.electronAPI.onTelegramUpdate(handleIncomingMessage);
+      window.electronAPI.onScheduleExecuted(handleScheduleExecuted);
+      window.electronAPI.onUpdateAvailable(() => showToast('📥 Доступно обновление...', 'info'));
+      window.electronAPI.onUpdateDownloaded(() => showToast('✅ Обновление загружено!', 'success'));
+    });
+    
+    async function doLogin() {
+      const login = document.getElementById('loginUsername').value.trim();
+      const password = document.getElementById('loginPassword').value.trim();
+      
+      if (!login || !password) {
+        showToast('Заполните все поля', 'error');
+        return;
+      }
+      
+      const result = await window.electronAPI.login({ login, password });
+      
+      if (result.success) {
+        currentUser = result.user;
+        isAdmin = result.user.role === 'admin';
+        
+        document.getElementById('loginScreen').classList.add('hidden');
+        document.getElementById('mainApp').classList.remove('hidden');
+        document.getElementById('currentUser').textContent = result.user.login + (isAdmin ? ' (Admin)' : '');
+        
+        // Скрываем кнопку пользователей для не-админов
+        if (!isAdmin) {
+          document.getElementById('usersNavBtn').classList.add('hidden');
+        }
+        
         await loadData();
         renderView();
         setupNavigation();
-        window.electronAPI.onTelegramUpdate(handleIncomingMessage);
-        window.electronAPI.onScheduleExecuted(handleScheduleExecuted);
-        window.electronAPI.onUpdateAvailable(() => showToast('📥 Доступно обновление...', 'info'));
-        window.electronAPI.onUpdateDownloaded(() => showToast('✅ Обновление загружено!', 'success'));
-      } catch (err) {
-        showToast('Ошибка загрузки: ' + err.message, 'error');
+      } else {
+        showToast(result.error || 'Ошибка входа', 'error');
       }
-    });
+    }
+    
+    function logout() {
+      currentUser = null;
+      isAdmin = false;
+      document.getElementById('loginScreen').classList.remove('hidden');
+      document.getElementById('mainApp').classList.add('hidden');
+      document.getElementById('loginUsername').value = '';
+      document.getElementById('loginPassword').value = '';
+    }
     
     async function loadData() {
       bots = await window.electronAPI.getBots();
       groups = await window.electronAPI.getGroups();
       schedules = await window.electronAPI.getSchedules();
+      users = await window.electronAPI.getUsers();
       const stats = await window.electronAPI.getStats();
       
       document.getElementById('statBots').textContent = stats.botCount;
@@ -399,6 +486,7 @@
       document.querySelectorAll('.nav-btn').forEach(btn => {
         btn.addEventListener('click', () => {
           const view = btn.dataset.view;
+          if (view === 'users' && !isAdmin) return;
           switchView(view);
         });
       });
@@ -421,6 +509,7 @@
         case 'groups': renderGroups(); break;
         case 'chat': renderChatList(); break;
         case 'schedules': renderSchedules(); break;
+        case 'users': renderUsers(); break;
       }
     }
     
@@ -513,6 +602,40 @@
                       ${s.status === 'active' ? '⏸' : '▶️'}
                     </button>
                     <button onclick="deleteSchedule(${s.id})" class="btn px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm">🗑️</button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+    
+    function renderUsers() {
+      const container = document.getElementById('usersList');
+      if (users.length === 0) {
+        container.innerHTML = `<div class="text-center py-12 text-slate-500"><div class="text-5xl mb-4">👤</div><p>Нет пользователей</p></div>`;
+        return;
+      }
+      container.innerHTML = `
+        <table class="w-full">
+          <thead><tr><th class="text-left">ID</th><th class="text-left">Логин</th><th class="text-left">Роль</th><th class="text-left">Создан</th><th class="text-left">Статус</th><th class="text-left">Действия</th></tr></thead>
+          <tbody>
+            ${users.map(u => `
+              <tr>
+                <td><code class="text-green-400">${u.id}</code></td>
+                <td class="font-medium">${escapeHtml(u.login)}</td>
+                <td><span class="badge ${u.role === 'admin' ? 'badge-purple' : 'badge-blue'}">${u.role === 'admin' ? 'Админ' : 'Пользователь'}</span></td>
+                <td class="text-slate-400 text-sm">${new Date(u.created_at).toLocaleDateString()}</td>
+                <td>${u.delete_request === 1 ? '<span class="badge badge-red">На удаление</span>' : '<span class="badge badge-green">Активен</span>'}</td>
+                <td>
+                  <div class="flex gap-2">
+                    ${u.delete_request === 1 && isAdmin ? `
+                      <button onclick="approveDeleteUser(${u.id})" class="btn px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm">✅ Подтвердить</button>
+                      <button onclick="cancelDeleteUser(${u.id})" class="btn px-3 py-1.5 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400 rounded-lg text-sm">❌ Отмена</button>
+                    ` : u.id !== currentUser.id ? `
+                      <button onclick="requestDeleteUser(${u.id})" class="btn px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm">🗑️ Удалить</button>
+                    ` : ''}
                   </div>
                 </td>
               </tr>
@@ -773,6 +896,87 @@
         closeModal();
         await loadData();
         renderSchedules();
+      } else {
+        showToast('❌ ' + result.error, 'error');
+      }
+    }
+    
+    function openAddUserModal() {
+      if (!isAdmin) return showToast('Только админ может добавлять пользователей', 'error');
+      
+      document.getElementById('modalTitle').textContent = '👤 Добавить пользователя';
+      document.getElementById('modalBody').innerHTML = `
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm text-slate-400 mb-2">Логин</label>
+            <input type="text" id="newUserLogin" class="input-field w-full" placeholder="Логин">
+          </div>
+          <div>
+            <label class="block text-sm text-slate-400 mb-2">Пароль</label>
+            <input type="password" id="newUserPassword" class="input-field w-full" placeholder="Пароль">
+          </div>
+          <div>
+            <label class="block text-sm text-slate-400 mb-2">Роль</label>
+            <select id="newUserRole" class="input-field w-full">
+              <option value="user">Пользователь</option>
+              <option value="admin">Админ</option>
+            </select>
+          </div>
+        </div>
+      `;
+      document.getElementById('modalSaveBtn').onclick = saveUser;
+      openModal();
+    }
+    
+    async function saveUser() {
+      const login = document.getElementById('newUserLogin').value.trim();
+      const password = document.getElementById('newUserPassword').value.trim();
+      const role = document.getElementById('newUserRole').value;
+      
+      if (!login || !password) return showToast('Заполните все поля', 'error');
+      
+      const result = await window.electronAPI.addUser({ login, password, role });
+      
+      if (result.success) {
+        showToast('✅ Пользователь добавлен!');
+        closeModal();
+        await loadData();
+        renderUsers();
+      } else {
+        showToast('❌ ' + result.error, 'error');
+      }
+    }
+    
+    async function requestDeleteUser(id) {
+      if (!confirm('Запросить удаление пользователя?')) return;
+      const result = await window.electronAPI.requestDeleteUser(id);
+      if (result.success) {
+        showToast('✅ Запрос на удаление отправлен');
+        await loadData();
+        renderUsers();
+      } else {
+        showToast('❌ ' + result.error, 'error');
+      }
+    }
+    
+    async function approveDeleteUser(id) {
+      if (!confirm('Подтвердить удаление пользователя?')) return;
+      const result = await window.electronAPI.approveDeleteUser(id);
+      if (result.success) {
+        showToast('✅ Пользователь удалён');
+        await loadData();
+        renderUsers();
+      } else {
+        showToast('❌ ' + result.error, 'error');
+      }
+    }
+    
+    async function cancelDeleteUser(id) {
+      const result = await window.electronAPI.cancelDeleteUser(id);
+      if (result.success) {
+        showToast('✅ Запрос на удаление отменён');
+        await loadData();
+        renderUsers();
       } else {
         showToast('❌ ' + result.error, 'error');
       }
