@@ -39,6 +39,7 @@ function decrypt(text) {
   }
 }
 
+// ============ ХЕШИРОВАНИЕ ПАРОЛЯ ============
 function hashPassword(password) {
   return crypto.createHash('sha256').update(password).digest('hex');
 }
@@ -57,7 +58,8 @@ function initDatabase() {
       login TEXT NOT NULL UNIQUE,
       password TEXT NOT NULL,
       role TEXT DEFAULT 'user',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      delete_request INTEGER DEFAULT 0
     );
     
     CREATE TABLE IF NOT EXISTS bots (
@@ -109,15 +111,15 @@ function initDatabase() {
   `);
   
   // Создаём админа если нет
-  const adminExists = db.prepare('SELECT COUNT(*) as count FROM users WHERE role = "admin"').get();
-  if (adminExists.count === 0) {
-    const hashedPassword = hashPassword('0901Admin');
-    db.prepare('INSERT INTO users (login, password, role) VALUES (?, ?, ?)').run('NeuralAP', hashedPassword, 'admin');
+  const adminExists = db.prepare('SELECT id FROM users WHERE login = ?').get('NeuralAP');
+  if (!adminExists) {
+    db.prepare('INSERT INTO users (login, password, role) VALUES (?, ?, ?)').run(
+      'NeuralAP', hashPassword('0901Admin'), 'admin'
+    );
     console.log('Admin created: NeuralAP / 0901Admin');
   }
   
   console.log('Database initialized at:', dbPath);
-  console.log('Data stored at:', userDataPath);
   return db;
 }
 
@@ -137,35 +139,56 @@ app.whenReady().then(async () => {
   
   // АВТОРИЗАЦИЯ
   ipcMain.handle('auth:login', (_, { login, password }) => {
-    const hashedPassword = hashPassword(password);
-    const user = db.prepare('SELECT * FROM users WHERE login = ? AND password = ?').get(login, hashedPassword);
-    if (user) {
-      return { success: true, user: { id: user.id, login: user.login, role: user.role } };
-    }
-    return { success: false, error: 'Неверный логин или пароль' };
-  });
-  
-  ipcMain.handle('auth:register', (_, { login, password }) => {
-    try {
-      const hashedPassword = hashPassword(password);
-      const stmt = db.prepare('INSERT INTO users (login, password, role) VALUES (?, ?, ?)');
-      const result = stmt.run(login, hashedPassword, 'user');
-      return { success: true, id: result.lastInsertRowid };
-    } catch (err) {
-      return { success: false, error: err.message.includes('UNIQUE') ? 'Логин уже занят' : err.message };
-    }
+    const user = db.prepare('SELECT * FROM users WHERE login = ?').get(login);
+    if (!user) return { success: false, error: 'Пользователь не найден' };
+    if (user.password !== hashPassword(password)) return { success: false, error: 'Неверный пароль' };
+    if (user.delete_request === 1) return { success: false, error: 'Аккаунт отмечен на удаление' };
+    return { success: true, user: { id: user.id, login: user.login, role: user.role } };
   });
   
   ipcMain.handle('auth:getUsers', () => {
-    return db.prepare('SELECT id, login, role, created_at FROM users ORDER BY id').all();
+    return db.prepare('SELECT id, login, role, created_at, delete_request FROM users ORDER BY id').all();
   });
   
-  ipcMain.handle('auth:requestDelete', (_, { userId, reason }) => {
-    const user = db.prepare('SELECT login FROM users WHERE id = ?').get(userId);
-    if (!user) return { success: false, error: 'Пользователь не найден' };
-    console.log(`Delete request for user ${user.login}: ${reason}`);
-    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
-    return { success: true };
+  ipcMain.handle('auth:addUser', (_, { login, password, role }) => {
+    try {
+      const exists = db.prepare('SELECT id FROM users WHERE login = ?').get(login);
+      if (exists) return { success: false, error: 'Логин уже занят' };
+      
+      db.prepare('INSERT INTO users (login, password, role) VALUES (?, ?, ?)').run(
+        login, hashPassword(password), role || 'user'
+      );
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+  
+  ipcMain.handle('auth:requestDelete', (_, id) => {
+    try {
+      db.prepare('UPDATE users SET delete_request = 1 WHERE id = ?').run(id);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+  
+  ipcMain.handle('auth:approveDelete', (_, id) => {
+    try {
+      db.prepare('DELETE FROM users WHERE id = ?').run(id);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+  
+  ipcMain.handle('auth:cancelDelete', (_, id) => {
+    try {
+      db.prepare('UPDATE users SET delete_request = 0 WHERE id = ?').run(id);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
   });
   
   // БОТЫ
@@ -257,7 +280,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('db:addSchedule', (_, { name, text, groupId, botId, scheduledTime, repeatType }) => {
     try {
       const stmt = db.prepare('INSERT INTO schedules (name, text, group_id, bot_id, scheduled_time, repeat_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)');
-      const result = stmt.run(name, text, groupId, botId, scheduledTime, repeatType, 'pending');
+      const result = stmt.run(name, text, groupId, botId, scheduledTime, repeatType, 'active');
       return { success: true, id: result.lastInsertRowid };
     } catch (err) {
       return { success: false, error: err.message };
@@ -289,7 +312,8 @@ app.whenReady().then(async () => {
     const messageCount = db.prepare('SELECT COUNT(*) as count FROM messages').get().count;
     const scheduleCount = db.prepare('SELECT COUNT(*) as count FROM schedules').get().count;
     const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-    return { botCount, groupCount, messageCount, scheduleCount, userCount };
+    const deleteRequests = db.prepare('SELECT COUNT(*) as count FROM users WHERE delete_request = 1').get().count;
+    return { botCount, groupCount, messageCount, scheduleCount, userCount, deleteRequests };
   });
   
   // СИНХРОНИЗАЦИЯ POLLING
@@ -423,6 +447,7 @@ function startScheduleChecker() {
       
       for (const schedule of schedules) {
         const shouldExecute = checkScheduleTime(schedule, currentTime, currentDate, now);
+        
         if (shouldExecute) {
           await executeSchedule(schedule);
         }
@@ -437,6 +462,7 @@ function startScheduleChecker() {
 
 function checkScheduleTime(schedule, currentTime, currentDate, now) {
   const scheduledTime = schedule.scheduled_time;
+  
   if (currentTime !== scheduledTime.slice(0, 5)) return false;
   
   if (schedule.repeat_type === 'once') {
@@ -465,10 +491,7 @@ async function executeSchedule(schedule) {
     const bot = db.prepare('SELECT * FROM bots WHERE id = ?').get(schedule.bot_id);
     const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(schedule.group_id);
     
-    if (!bot || !group) {
-      console.error('Bot or group not found for schedule:', schedule.id);
-      return;
-    }
+    if (!bot || !group) return;
     
     const token = decrypt(bot.token);
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -485,7 +508,6 @@ async function executeSchedule(schedule) {
       );
       db.prepare('UPDATE schedules SET last_executed = ? WHERE id = ?').run(new Date().toISOString(), schedule.id);
       win.webContents.send('tg:scheduleExecuted', { scheduleId: schedule.id, success: true });
-      console.log(`Schedule ${schedule.id} executed successfully`);
     } else {
       win.webContents.send('tg:scheduleExecuted', { scheduleId: schedule.id, success: false, error: result.description });
     }
