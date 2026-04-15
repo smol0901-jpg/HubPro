@@ -110,7 +110,6 @@ function initDatabase() {
     );
   `);
   
-  // Создаём админа если нет
   const adminExists = db.prepare('SELECT id FROM users WHERE login = ?').get('NeuralAP');
   if (!adminExists) {
     db.prepare('INSERT INTO users (login, password, role) VALUES (?, ?, ?)').run(
@@ -310,17 +309,48 @@ function registerIPCHandlers() {
     syncPolling(bots, groups);
   });
   
-  // TELEGRAM API
+  // TELEGRAM API - УЛУЧШЕННАЯ ОТПРАВКА ============
   ipcMain.handle('tg:send', async (_, { token, chatId, text }) => {
     try {
+      // Проверяем токен
+      const meRes = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+      const meData = await meRes.json();
+      if (!meData.ok) {
+        return { ok: false, description: 'Неверный токен бота' };
+      }
+      
+      // Проверяем доступ к чату
+      const chatRes = await fetch(`https://api.telegram.org/bot${token}/getChat?chat_id=${chatId}`);
+      const chatData = await chatRes.json();
+      if (!chatData.ok) {
+        return { ok: false, description: 'Бот не добавлен в группу или нет прав. Добавьте бота в группу и дайте права администратора' };
+      }
+      
+      // Отправляем сообщение
       const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' })
+        body: JSON.stringify({ chat_id: chatId, text: text, parse_mode: 'HTML' })
       });
-      return await res.json();
+      const result = await res.json();
+      
+      if (!result.ok) {
+        if (result.description.includes('chat not found')) {
+          return { ok: false, description: 'Группа не найдена. Проверьте Chat ID' };
+        }
+        if (result.description.includes('bot was kicked')) {
+          return { ok: false, description: 'Бот удалён из группы. Добавьте бота в группу' };
+        }
+        if (result.description.includes('rights')) {
+          return { ok: false, description: 'Нет прав. Дайте боту права администратора в группе' };
+        }
+        return result;
+      }
+      
+      return result;
     } catch (err) {
-      return { ok: false, description: err.message };
+      console.error('Telegram send error:', err.message);
+      return { ok: false, description: 'Ошибка соединения: ' + err.message };
     }
   });
 
@@ -341,21 +371,13 @@ autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
 
 app.whenReady().then(async () => {
-  // Сначала инициализируем БД
   db = initDatabase();
-  
-  // Регистрируем обработчики ДО создания окна
   registerIPCHandlers();
-  
-  // Создаём окно
   createWindow();
-  
-  // Остальные функции
   await createTray();
   setupAutoUpdater();
   startScheduleChecker();
   
-  // ЗАПУСК POLLING
   const bots = db.prepare('SELECT * FROM bots WHERE online = 1').all();
   const groups = db.prepare('SELECT * FROM groups').all();
   syncPolling(bots, groups);
@@ -386,7 +408,6 @@ function createWindow() {
 }
 
 async function createTray() {
-  // Создаём папку build если нет
   const buildDir = path.join(__dirname, 'build');
   if (!fs.existsSync(buildDir)) {
     fs.mkdirSync(buildDir, { recursive: true });
@@ -394,9 +415,7 @@ async function createTray() {
   
   const iconPath = path.join(buildDir, 'icon.png');
   
-  // Если иконки нет - создаём простую
   if (!fs.existsSync(iconPath)) {
-    // Создаём простую 16x16 иконку (синий квадрат)
     const iconBuffer = Buffer.from([
       0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
       0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x10,
@@ -413,7 +432,6 @@ async function createTray() {
     fs.writeFileSync(iconPath, iconBuffer);
   }
   
-  // Используем nativeImage для создания иконки
   const icon = nativeImage.createFromPath(iconPath);
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   
@@ -427,7 +445,7 @@ async function createTray() {
   tray.on('double-click', () => { win.show(); win.focus(); });
 }
 
-// ============ POLLING ВХОДЯЩИХ ============
+// ============ POLLING С УЛУЧШЕННОЙ ОБРАБОТКОЙ ОШИБОК ============
 function syncPolling(bots, groups) {
   Object.values(pollingIntervals).forEach(clearInterval);
   pollingIntervals = {};
@@ -436,9 +454,18 @@ function syncPolling(bots, groups) {
   bots.forEach(bot => {
     const decryptedToken = decrypt(bot.token);
     botOffsets[bot.id] = 0;
-    pollingIntervals[bot.id] = setInterval(async () => {
+    
+    const poll = async () => {
       try {
-        const res = await fetch(`https://api.telegram.org/bot${decryptedToken}/getUpdates?offset=${botOffsets[bot.id]}&timeout=10`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        
+        const res = await fetch(
+          `https://api.telegram.org/bot${decryptedToken}/getUpdates?offset=${botOffsets[bot.id]}&timeout=10`,
+          { signal: controller.signal }
+        );
+        clearTimeout(timeoutId);
+        
         const data = await res.json();
         if (data.ok && data.result) {
           data.result.forEach(update => {
@@ -460,8 +487,15 @@ function syncPolling(bots, groups) {
             }
           });
         }
-      } catch (err) { console.error('Polling error:', err); }
-    }, 3000);
+      } catch (err) {
+        // Игнорируем таймауты - это нормально
+        if (err.name === 'AbortError') return;
+        // Логируем только важные ошибки
+        console.log('Polling bot', bot.id, ':', err.message);
+      }
+    };
+    
+    pollingIntervals[bot.id] = setInterval(poll, 3000);
   });
 }
 
@@ -578,7 +612,6 @@ function setupAutoUpdater() {
     console.error('AutoUpdater error:', err);
   });
   
-  // Проверяем обновления при запуске (только для сборки)
   if (app.isPackaged) {
     autoUpdater.checkForUpdatesAndNotify();
   }
