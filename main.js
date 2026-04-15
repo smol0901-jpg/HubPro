@@ -4,12 +4,33 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
+const VERSION = '1.1.0';
+const UPDATE_INFO = [
+  { version: '1.1.0', date: '2026-04-15', changes: [
+    'Добавлена очистка сообщений чатов',
+    'Пользователи могут менять логин и пароль',
+    'Редактирование ботов и групп',
+    'Редактирование расписания',
+    'Лог отправки сообщений в расписании',
+    'Ограничение прав пользователей',
+    'Информационный блок версий'
+  ]},
+  { version: '1.0.0', date: '2026-04-13', changes: [
+    'Первая версия',
+    'Управление ботами и группами',
+    'Шифрование токенов AES-256',
+    'Система авторизации',
+    'Расписание сообщений'
+  ]}
+];
+
 let win;
 let tray;
 let pollingIntervals = {};
 let botOffsets = {};
 let db;
 let scheduleIntervals = [];
+
 
 // ============ ШИФРОВАНИЕ ============
 const ENCRYPTION_KEY = crypto.scryptSync(app.getPath('userData'), 'hubpro-salt', 32);
@@ -39,7 +60,6 @@ function decrypt(text) {
   }
 }
 
-// ============ ХЕШИРОВАНИЕ ПАРОЛЯ ============
 function hashPassword(password) {
   return crypto.createHash('sha256').update(password).digest('hex');
 }
@@ -104,6 +124,15 @@ function initDatabase() {
       FOREIGN KEY (bot_id) REFERENCES bots(id) ON DELETE CASCADE
     );
     
+    CREATE TABLE IF NOT EXISTS schedule_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      schedule_id INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      error TEXT,
+      executed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE
+    );
+    
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT
@@ -122,8 +151,13 @@ function initDatabase() {
   return db;
 }
 
-// ============ РЕГИСТРАЦИЯ IPC ОБРАБОТЧИКОВ ============
+// ============ IPC ОБРАБОТЧИКИ ============
 function registerIPCHandlers() {
+  // ИНФОРМАЦИЯ О ВЕРСИИ
+  ipcMain.handle('app:getVersion', () => {
+    return { version: VERSION, updates: UPDATE_INFO };
+  });
+  
   // АВТОРИЗАЦИЯ
   ipcMain.handle('auth:login', (_, { login, password }) => {
     const user = db.prepare('SELECT * FROM users WHERE login = ?').get(login);
@@ -144,6 +178,30 @@ function registerIPCHandlers() {
       db.prepare('INSERT INTO users (login, password, role) VALUES (?, ?, ?)').run(
         login, hashPassword(password), role || 'user'
       );
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+  
+  // СМЕНА ПАРОЛЯ/ЛОГИНА (пользователь сам или админ)
+  ipcMain.handle('auth:updateUser', (_, { id, login, password, currentUserId, currentUserRole }) => {
+    try {
+      // Пользователь может менять только себя, админ - всех
+      if (id !== currentUserId && currentUserRole !== 'admin') {
+        return { success: false, error: 'Нет прав на редактирование' };
+      }
+      
+      if (login) {
+        const exists = db.prepare('SELECT id FROM users WHERE login = ? AND id != ?').get(login, id);
+        if (exists) return { success: false, error: 'Логин уже занят' };
+        db.prepare('UPDATE users SET login = ? WHERE id = ?').run(login, id);
+      }
+      
+      if (password) {
+        db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(password), id);
+      }
+      
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
@@ -196,8 +254,11 @@ function registerIPCHandlers() {
   
   ipcMain.handle('db:updateBot', (_, { id, name, token, online }) => {
     try {
-      const encryptedToken = encrypt(token);
-      db.prepare('UPDATE bots SET name = ?, token = ?, online = ? WHERE id = ?').run(name, encryptedToken, online ? 1 : 0, id);
+      if (token) {
+        db.prepare('UPDATE bots SET name = ?, token = ?, online = ? WHERE id = ?').run(name, encrypt(token), online ? 1 : 0, id);
+      } else {
+        db.prepare('UPDATE bots SET name = ?, online = ? WHERE id = ?').run(name, online ? 1 : 0, id);
+      }
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
@@ -228,6 +289,15 @@ function registerIPCHandlers() {
     }
   });
   
+  ipcMain.handle('db:updateGroup', (_, { id, name, chatId, botId }) => {
+    try {
+      db.prepare('UPDATE groups SET name = ?, chat_id = ?, bot_id = ? WHERE id = ?').run(name, chatId, botId, id);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+  
   ipcMain.handle('db:deleteGroup', (_, id) => {
     try {
       db.prepare('DELETE FROM groups WHERE id = ?').run(id);
@@ -252,6 +322,19 @@ function registerIPCHandlers() {
     }
   });
   
+  ipcMain.handle('db:clearMessages', (_, groupId) => {
+    try {
+      if (groupId) {
+        db.prepare('DELETE FROM messages WHERE group_id = ?').run(groupId);
+      } else {
+        db.prepare('DELETE FROM messages').run();
+      }
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+  
   // РАСПИСАНИЕ
   ipcMain.handle('db:getSchedules', () => {
     return db.prepare(`
@@ -263,11 +346,26 @@ function registerIPCHandlers() {
     `).all();
   });
   
+  ipcMain.handle('db:getScheduleLogs', (_, scheduleId) => {
+    return db.prepare('SELECT * FROM schedule_logs WHERE schedule_id = ? ORDER BY executed_at DESC LIMIT 50').all(scheduleId);
+  });
+  
   ipcMain.handle('db:addSchedule', (_, { name, text, groupId, botId, scheduledTime, repeatType }) => {
     try {
       const stmt = db.prepare('INSERT INTO schedules (name, text, group_id, bot_id, scheduled_time, repeat_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)');
       const result = stmt.run(name, text, groupId, botId, scheduledTime, repeatType, 'active');
       return { success: true, id: result.lastInsertRowid };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+  
+  ipcMain.handle('db:updateSchedule', (_, { id, name, text, groupId, botId, scheduledTime, repeatType }) => {
+    try {
+      db.prepare('UPDATE schedules SET name = ?, text = ?, group_id = ?, bot_id = ?, scheduled_time = ?, repeat_type = ? WHERE id = ?').run(
+        name, text, groupId, botId, scheduledTime, repeatType, id
+      );
+      return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -309,48 +407,25 @@ function registerIPCHandlers() {
     syncPolling(bots, groups);
   });
   
-  // TELEGRAM API - УЛУЧШЕННАЯ ОТПРАВКА ============
+  // TELEGRAM API
   ipcMain.handle('tg:send', async (_, { token, chatId, text }) => {
     try {
-      // Проверяем токен
       const meRes = await fetch(`https://api.telegram.org/bot${token}/getMe`);
       const meData = await meRes.json();
-      if (!meData.ok) {
-        return { ok: false, description: 'Неверный токен бота' };
-      }
+      if (!meData.ok) return { ok: false, description: 'Неверный токен бота' };
       
-      // Проверяем доступ к чату
       const chatRes = await fetch(`https://api.telegram.org/bot${token}/getChat?chat_id=${chatId}`);
       const chatData = await chatRes.json();
-      if (!chatData.ok) {
-        return { ok: false, description: 'Бот не добавлен в группу или нет прав. Добавьте бота в группу и дайте права администратора' };
-      }
+      if (!chatData.ok) return { ok: false, description: 'Бот не добавлен в группу' };
       
-      // Отправляем сообщение
       const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: chatId, text: text, parse_mode: 'HTML' })
       });
-      const result = await res.json();
-      
-      if (!result.ok) {
-        if (result.description.includes('chat not found')) {
-          return { ok: false, description: 'Группа не найдена. Проверьте Chat ID' };
-        }
-        if (result.description.includes('bot was kicked')) {
-          return { ok: false, description: 'Бот удалён из группы. Добавьте бота в группу' };
-        }
-        if (result.description.includes('rights')) {
-          return { ok: false, description: 'Нет прав. Дайте боту права администратора в группе' };
-        }
-        return result;
-      }
-      
-      return result;
+      return await res.json();
     } catch (err) {
-      console.error('Telegram send error:', err.message);
-      return { ok: false, description: 'Ошибка соединения: ' + err.message };
+      return { ok: false, description: 'Ошибка: ' + err.message };
     }
   });
 
@@ -388,7 +463,7 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1280,
     height: 850,
-    title: 'HubPro',
+    title: 'HubPro v' + VERSION,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -440,12 +515,12 @@ async function createTray() {
     { type: 'separator' },
     { label: 'Закрыть полностью', click: () => { app.isQuitting = true; app.quit(); } }
   ]);
-  tray.setToolTip('HubPro — Управление Telegram ботами');
+  tray.setToolTip('HubPro v' + VERSION + ' — Управление Telegram ботами');
   tray.setContextMenu(contextMenu);
   tray.on('double-click', () => { win.show(); win.focus(); });
 }
 
-// ============ POLLING С УЛУЧШЕННОЙ ОБРАБОТКОЙ ОШИБОК ============
+// ============ POLLING ============
 function syncPolling(bots, groups) {
   Object.values(pollingIntervals).forEach(clearInterval);
   pollingIntervals = {};
@@ -488,9 +563,7 @@ function syncPolling(bots, groups) {
           });
         }
       } catch (err) {
-        // Игнорируем таймауты - это нормально
         if (err.name === 'AbortError') return;
-        // Логируем только важные ошибки
         console.log('Polling bot', bot.id, ':', err.message);
       }
     };
@@ -569,17 +642,27 @@ async function executeSchedule(schedule) {
     
     const result = await res.json();
     
+    // ЛОГИРУЕМ ОТПРАВКУ
     if (result.ok) {
+      db.prepare('INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)').run(
+        schedule.id, 'success', null
+      );
       db.prepare('INSERT INTO messages (group_id, text, sent, sender) VALUES (?, ?, 1, ?)').run(
         group.id, schedule.text, 'HubPro (авто)'
       );
       db.prepare('UPDATE schedules SET last_executed = ? WHERE id = ?').run(new Date().toISOString(), schedule.id);
       win.webContents.send('tg:scheduleExecuted', { scheduleId: schedule.id, success: true });
     } else {
+      db.prepare('INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)').run(
+        schedule.id, 'error', result.description
+      );
       win.webContents.send('tg:scheduleExecuted', { scheduleId: schedule.id, success: false, error: result.description });
     }
   } catch (err) {
     console.error('Execute schedule error:', err);
+    db.prepare('INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)').run(
+      schedule.id, 'error', err.message
+    );
     win.webContents.send('tg:scheduleExecuted', { scheduleId: schedule.id, success: false, error: err.message });
   }
 }
