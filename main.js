@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, nativeImage } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
@@ -123,20 +123,8 @@ function initDatabase() {
   return db;
 }
 
-// ============ АВТООБНОВЛЕНИЕ ============
-autoUpdater.autoDownload = true;
-autoUpdater.autoInstallOnAppQuit = true;
-autoUpdater.logger = null;
-
-app.whenReady().then(async () => {
-  db = initDatabase();
-  createWindow();
-  await createTray();
-  setupAutoUpdater();
-  startScheduleChecker();
-  
-  // ============ IPC ОБРАБОТЧИКИ ============
-  
+// ============ РЕГИСТРАЦИЯ IPC ОБРАБОТЧИКОВ ============
+function registerIPCHandlers() {
   // АВТОРИЗАЦИЯ
   ipcMain.handle('auth:login', (_, { login, password }) => {
     const user = db.prepare('SELECT * FROM users WHERE login = ?').get(login);
@@ -154,7 +142,6 @@ app.whenReady().then(async () => {
     try {
       const exists = db.prepare('SELECT id FROM users WHERE login = ?').get(login);
       if (exists) return { success: false, error: 'Логин уже занят' };
-      
       db.prepare('INSERT INTO users (login, password, role) VALUES (?, ?, ?)').run(
         login, hashPassword(password), role || 'user'
       );
@@ -323,6 +310,51 @@ app.whenReady().then(async () => {
     syncPolling(bots, groups);
   });
   
+  // TELEGRAM API
+  ipcMain.handle('tg:send', async (_, { token, chatId, text }) => {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' })
+      });
+      return await res.json();
+    } catch (err) {
+      return { ok: false, description: err.message };
+    }
+  });
+
+  ipcMain.handle('tg:checkBot', async (_, token) => {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+      return await res.json();
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+  
+  console.log('IPC handlers registered');
+}
+
+// ============ АВТООБНОВЛЕНИЕ ============
+autoUpdater.autoDownload = true;
+autoUpdater.autoInstallOnAppQuit = true;
+
+app.whenReady().then(async () => {
+  // Сначала инициализируем БД
+  db = initDatabase();
+  
+  // Регистрируем обработчики ДО создания окна
+  registerIPCHandlers();
+  
+  // Создаём окно
+  createWindow();
+  
+  // Остальные функции
+  await createTray();
+  setupAutoUpdater();
+  startScheduleChecker();
+  
   // ЗАПУСК POLLING
   const bots = db.prepare('SELECT * FROM bots WHERE online = 1').all();
   const groups = db.prepare('SELECT * FROM groups').all();
@@ -335,7 +367,6 @@ function createWindow() {
     width: 1280,
     height: 850,
     title: 'HubPro',
-    icon: path.join(__dirname, 'build/icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -355,12 +386,37 @@ function createWindow() {
 }
 
 async function createTray() {
-  const iconPath = path.join(__dirname, 'build/icon.png');
-  if (!fs.existsSync(iconPath)) {
-    const base64 = 'image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAC5JREFUOE9jZKAQMFKonmFA1jBQ20BRcYw0YDQAAwMDAwMjGQMmBtMwMAwMAAChTgkG7y3wHAAAAABJRU5ErkJggg==';
-    fs.writeFileSync(iconPath, Buffer.from(base64.split(',')[1], 'base64'));
+  // Создаём папку build если нет
+  const buildDir = path.join(__dirname, 'build');
+  if (!fs.existsSync(buildDir)) {
+    fs.mkdirSync(buildDir, { recursive: true });
   }
-  tray = new Tray(iconPath);
+  
+  const iconPath = path.join(buildDir, 'icon.png');
+  
+  // Если иконки нет - создаём простую
+  if (!fs.existsSync(iconPath)) {
+    // Создаём простую 16x16 иконку (синий квадрат)
+    const iconBuffer = Buffer.from([
+      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+      0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x10,
+      0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0xF3, 0xFF, 0x61, 0x00, 0x00, 0x00,
+      0x01, 0x73, 0x52, 0x47, 0x42, 0x00, 0xAE, 0xCE, 0x1C, 0xE9, 0x00, 0x00,
+      0x00, 0x3D, 0x49, 0x44, 0x41, 0x54, 0x38, 0x4F, 0x63, 0x64, 0x60, 0x18,
+      0x05, 0xA3, 0x00, 0x31, 0x80, 0x98, 0x98, 0x98, 0x98, 0x18, 0x05, 0xA3,
+      0x00, 0x31, 0x80, 0x98, 0x98, 0x98, 0x98, 0x18, 0x05, 0xA3, 0x00, 0x31,
+      0x80, 0x98, 0x98, 0x98, 0x98, 0x18, 0x05, 0xA3, 0x00, 0x31, 0x80, 0x98,
+      0x98, 0x98, 0x98, 0x18, 0x05, 0xA3, 0x00, 0x00, 0x0A, 0x3F, 0x04, 0x1C,
+      0xB8, 0xD1, 0x3E, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+      0x42, 0x60, 0x82
+    ]);
+    fs.writeFileSync(iconPath, iconBuffer);
+  }
+  
+  // Используем nativeImage для создания иконки
+  const icon = nativeImage.createFromPath(iconPath);
+  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
+  
   const contextMenu = Menu.buildFromTemplate([
     { label: 'Открыть HubPro', click: () => { win.show(); win.focus(); } },
     { type: 'separator' },
@@ -370,29 +426,6 @@ async function createTray() {
   tray.setContextMenu(contextMenu);
   tray.on('double-click', () => { win.show(); win.focus(); });
 }
-
-// ============ TELEGRAM API ============
-ipcMain.handle('tg:send', async (_, { token, chatId, text }) => {
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' })
-    });
-    return await res.json();
-  } catch (err) {
-    return { ok: false, description: err.message };
-  }
-});
-
-ipcMain.handle('tg:checkBot', async (_, token) => {
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
-    return await res.json();
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
-});
 
 // ============ POLLING ВХОДЯЩИХ ============
 function syncPolling(bots, groups) {
@@ -520,10 +553,17 @@ async function executeSchedule(schedule) {
 // ============ АВТООБНОВЛЕНИЕ ============
 function setupAutoUpdater() {
   autoUpdater.on('update-available', (info) => {
-    win.webContents.send('update-available', info);
+    console.log('Update available:', info.version);
+    if (win && win.webContents) {
+      win.webContents.send('update-available', info);
+    }
   });
+  
   autoUpdater.on('update-downloaded', (info) => {
-    win.webContents.send('update-downloaded', info);
+    console.log('Update downloaded:', info.version);
+    if (win && win.webContents) {
+      win.webContents.send('update-downloaded', info);
+    }
     dialog.showMessageBox(win, {
       type: 'info',
       title: 'Обновление',
@@ -533,7 +573,15 @@ function setupAutoUpdater() {
       if (response === 0) autoUpdater.quitAndInstall();
     });
   });
-  setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 3000);
+  
+  autoUpdater.on('error', (err) => {
+    console.error('AutoUpdater error:', err);
+  });
+  
+  // Проверяем обновления при запуске (только для сборки)
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdatesAndNotify();
+  }
 }
 
 // ============ ЗАВЕРШЕНИЕ ============
