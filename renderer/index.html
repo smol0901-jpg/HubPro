@@ -16,7 +16,6 @@
     .app-container { position: relative; z-index: 1; }
     .glass-card { background: rgba(15,23,42,0.6); border: 1px solid rgba(148,163,184,0.1); border-radius: 20px; backdrop-filter: blur(20px); transition: all 0.4s cubic-bezier(0.4,0,0.2,1); }
     .glass-card:hover { border-color: rgba(59,130,246,0.3); box-shadow: 0 25px 50px rgba(0,0,0,0.4), 0 0 30px rgba(59,130,246,0.1); }
-    .stat-card { background: linear-gradient(135deg, rgba(15,23,42,0.8) 0%, rgba(30,41,59,0.6) 100%); border: 1px solid rgba(148,163,184,0.15); border-radius: 16px; backdrop-filter: blur(20px); }
     .btn { transition: all 0.2s cubic-bezier(0.4,0,0.2,1); position: relative; overflow: hidden; }
     .btn::before { content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent); transition: left 0.5s; }
     .btn:hover::before { left: 100%; }
@@ -32,12 +31,18 @@
     .status-dot { width: 8px; height: 8px; border-radius: 50%; }
     .status-online { background: #22c55e; box-shadow: 0 0 8px rgba(34,197,94,0.5); }
     .status-offline { background: #ef4444; }
-    .chat-container { background: rgba(15,23,42,0.4); border: 1px solid rgba(148,163,184,0.1); border-radius: 16px; overflow: hidden; }
-    .chat-list { background: rgba(15,23,42,0.6); border-right: 1px solid rgba(148,163,184,0.1); }
-    .chat-item { transition: all 0.2s ease; cursor: pointer; }
+    .chat-container { background: rgba(15,23,42,0.4); border: 1px solid rgba(148,163,184,0.1); border-radius: 16px; overflow: hidden; display: flex; min-height: 500px; max-height: calc(100vh - 200px); }
+    .chat-list { background: rgba(15,23,42,0.6); border-right: 1px solid rgba(148,163,184,0.1); min-width: 220px; max-width: 280px; flex-shrink: 0; }
+    .chat-item { transition: all 0.2s ease; cursor: pointer; padding: 12px 16px; border-left: 3px solid transparent; }
     .chat-item:hover { background: rgba(59,130,246,0.1); }
-    .chat-item.active { background: rgba(59,130,246,0.2); border-left: 3px solid #3b82f6; }
-    .message.sent { background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); border-radius: 16px 16px 4px 16px; }
+    .chat-item.active { background: rgba(59,130,246,0.2); border-left-color: #3b82f6; }
+    .chat-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .chat-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; }
+    .chat-input-area { padding: 16px; border-top: 1px solid rgba(148,163,184,0.1); display: flex; gap: 12px; flex-shrink: 0; }
+    .chat-input-area input { flex: 1; min-width: 0; }
+    .chat-input-area button { flex-shrink: 0; }
+    .message { padding: 10px 14px; margin-bottom: 8px; max-width: 80%; }
+    .message.sent { background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); border-radius: 16px 16px 4px 16px; margin-left: auto; }
     .message.received { background: rgba(30,41,59,0.8); border-radius: 16px 16px 16px 4px; }
     .modal-overlay { background: rgba(0,0,0,0.8); backdrop-filter: blur(8px); }
     .modal-content { background: rgba(15,23,42,0.95); border: 1px solid rgba(148,163,184,0.15); border-radius: 20px; backdrop-filter: blur(20px); }
@@ -120,9 +125,9 @@
         </div>
       </header>
       
-      <div class="flex gap-6">
-        <aside class="sidebar w-64 rounded-2xl p-4 h-fit sticky top-4">
-          <nav class="space-y-2">
+      <div class="flex gap-6 flex-col lg:flex-row">
+        <aside class="sidebar w-full lg:w-64 rounded-2xl p-4 h-fit sticky top-4">
+          <nav class="grid grid-cols-2 lg:grid-cols-1 gap-2">
             <button class="nav-btn active w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left" data-view="dashboard">
               <span class="text-xl">📊</span><span>Дашборд</span>
             </button>
@@ -163,18 +168,18 @@
         <main class="flex-1" id="mainContent">
           <!-- Dashboard -->
           <div id="view-dashboard" class="view-content">
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
-              <div class="stat-card p-6"><div class="flex items-center gap-4"><div class="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center text-2xl">🤖</div><div><p class="text-slate-400 text-sm">Ботов</p><p class="text-3xl font-bold text-white" id="dashBots">0</p></div></div></div>
-              <div class="stat-card p-6"><div class="flex items-center gap-4"><div class="w-12 h-12 bg-purple-500/20 rounded-xl flex items-center justify-center text-2xl">👥</div><div><p class="text-slate-400 text-sm">Групп</p><p class="text-3xl font-bold text-white" id="dashGroups">0</p></div></div></div>
-              <div class="stat-card p-6"><div class="flex items-center gap-4"><div class="w-12 h-12 bg-orange-500/20 rounded-xl flex items-center justify-center text-2xl">⏰</div><div><p class="text-slate-400 text-sm">Расписаний</p><p class="text-3xl font-bold text-white" id="dashSchedules">0</p></div></div></div>
-              <div class="stat-card p-6"><div class="flex items-center gap-4"><div class="w-12 h-12 bg-green-500/20 rounded-xl flex items-center justify-center text-2xl">💬</div><div><p class="text-slate-400 text-sm">Сообщений</p><p class="text-3xl font-bold text-white" id="dashMessages">0</p></div></div></div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mb-6">
+              <div class="stat-card p-4 md:p-6"><div class="flex items-center gap-3 md:gap-4"><div class="w-10 md:w-12 h-10 md:h-12 bg-blue-500/20 rounded-xl flex items-center justify-center text-xl">🤖</div><div><p class="text-slate-400 text-xs md:text-sm">Ботов</p><p class="text-2xl md:text-3xl font-bold text-white" id="dashBots">0</p></div></div></div>
+              <div class="stat-card p-4 md:p-6"><div class="flex items-center gap-3 md:gap-4"><div class="w-10 md:w-12 h-10 md:h-12 bg-purple-500/20 rounded-xl flex items-center justify-center text-xl">👥</div><div><p class="text-slate-400 text-xs md:text-sm">Групп</p><p class="text-2xl md:text-3xl font-bold text-white" id="dashGroups">0</p></div></div></div>
+              <div class="stat-card p-4 md:p-6"><div class="flex items-center gap-3 md:gap-4"><div class="w-10 md:w-12 h-10 md:h-12 bg-orange-500/20 rounded-xl flex items-center justify-center text-xl">⏰</div><div><p class="text-slate-400 text-xs md:text-sm">Расписаний</p><p class="text-2xl md:text-3xl font-bold text-white" id="dashSchedules">0</p></div></div></div>
+              <div class="stat-card p-4 md:p-6"><div class="flex items-center gap-3 md:gap-4"><div class="w-10 md:w-12 h-10 md:h-12 bg-green-500/20 rounded-xl flex items-center justify-center text-xl">💬</div><div><p class="text-slate-400 text-xs md:text-sm">Сообщений</p><p class="text-2xl md:text-3xl font-bold text-white" id="dashMessages">0</p></div></div></div>
             </div>
             <div class="glass-card p-6">
               <h2 class="text-xl font-semibold section-title mb-6">🚀 Быстрые действия</h2>
               <div class="flex flex-wrap gap-4">
-                <button onclick="openAddBotModal()" class="btn px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-500 rounded-xl font-medium text-white shadow-lg">➕ Добавить бота</button>
-                <button onclick="openAddGroupModal()" class="btn px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-500 rounded-xl font-medium text-white shadow-lg">➕ Добавить группу</button>
-                <button onclick="openAddScheduleModal()" class="btn px-6 py-3 bg-gradient-to-r from-orange-600 to-orange-500 rounded-xl font-medium text-white shadow-lg">⏰ Создать расписание</button>
+                <button onclick="openAddBotModal()" class="btn px-4 md:px-6 py-2 md:py-3 bg-gradient-to-r from-blue-600 to-blue-500 rounded-xl font-medium text-white text-sm md:text-base shadow-lg">➕ Добавить бота</button>
+                <button onclick="openAddGroupModal()" class="btn px-4 md:px-6 py-2 md:py-3 bg-gradient-to-r from-purple-600 to-purple-500 rounded-xl font-medium text-white text-sm md:text-base shadow-lg">➕ Добавить группу</button>
+                <button onclick="openAddScheduleModal()" class="btn px-4 md:px-6 py-2 md:py-3 bg-gradient-to-r from-orange-600 to-orange-500 rounded-xl font-medium text-white text-sm md:text-base shadow-lg">⏰ Создать расписание</button>
               </div>
             </div>
           </div>
@@ -184,7 +189,7 @@
             <div class="glass-card p-6 mb-6">
               <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
                 <h2 class="text-xl font-semibold section-title">🤖 Управление ботами</h2>
-                <button onclick="openAddBotModal()" class="btn px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-500 rounded-xl font-medium text-white">➕ Добавить бота</button>
+                <button onclick="openAddBotModal()" class="btn px-4 md:px-6 py-2 md:py-3 bg-gradient-to-r from-blue-600 to-blue-500 rounded-xl font-medium text-white text-sm md:text-base">➕ Добавить бота</button>
               </div>
               <div id="botsList"></div>
             </div>
@@ -195,7 +200,7 @@
             <div class="glass-card p-6 mb-6">
               <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
                 <h2 class="text-xl font-semibold section-title">👥 Управление группами</h2>
-                <button onclick="openAddGroupModal()" class="btn px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-500 rounded-xl font-medium text-white">➕ Добавить группу</button>
+                <button onclick="openAddGroupModal()" class="btn px-4 md:px-6 py-2 md:py-3 bg-gradient-to-r from-purple-600 to-purple-500 rounded-xl font-medium text-white text-sm md:text-base">➕ Добавить группу</button>
               </div>
               <div id="groupsList"></div>
             </div>
@@ -203,19 +208,19 @@
           
           <!-- Chat -->
           <div id="view-chat" class="view-content hidden">
-            <div class="chat-container" style="height: calc(100vh - 200px);">
-              <div class="chat-list w-80 flex flex-col">
+            <div class="chat-container">
+              <div class="chat-list">
                 <div class="p-4 border-b border-slate-700/50 flex justify-between items-center">
                   <h3 class="font-semibold text-lg">💬 Чаты</h3>
-                  <button onclick="clearAllMessages()" class="btn px-2 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-xs">🗑️ Всё</button>
+                  <button onclick="clearAllMessages()" class="btn px-2 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-xs" title="Очистить все">🗑️</button>
                 </div>
                 <div class="flex-1 overflow-y-auto" id="chatGroupsList"></div>
               </div>
-              <div class="flex-1 flex flex-col">
+              <div class="chat-main">
                 <div id="chatHeader" class="p-4 border-b border-slate-700/50 hidden">
-                  <div class="flex items-center justify-between">
+                  <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
                     <div>
-                      <h3 class="font-semibold" id="chatGroupName">Группа</h3>
+                      <h3 class="font-semibold text-lg" id="chatGroupName">Группа</h3>
                       <p class="text-sm text-slate-400" id="chatBotStatus">Бот: оффлайн</p>
                     </div>
                     <div class="flex gap-2">
@@ -224,15 +229,14 @@
                     </div>
                   </div>
                 </div>
-                <div class="flex-1 overflow-y-auto p-4 space-y-4" id="chatMessages"></div>
-                <div id="chatInputArea" class="p-4 border-t border-slate-700/50 hidden">
-                  <div class="flex gap-3">
-                    <input type="text" id="chatInput" class="input-field flex-1" placeholder="Введите сообщение..." onkeypress="if(event.key==='Enter')sendMessage()">
-                    <button onclick="sendMessage()" class="btn px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl font-medium text-white">📤 Отправить</button>
+                <div class="chat-messages" id="chatMessages">
+                  <div class="text-center text-slate-500 flex-1 flex items-center justify-center h-full">
+                    <div><div class="text-5xl mb-4">💬</div><p>Выберите чат</p></div>
                   </div>
                 </div>
-                <div id="chatEmpty" class="flex-1 flex items-center justify-center">
-                  <div class="text-center text-slate-500"><div class="text-5xl mb-4">💬</div><p>Выберите чат для начала общения</p></div>
+                <div id="chatInputArea" class="chat-input-area hidden">
+                  <input type="text" id="chatInput" class="input-field" placeholder="Введите сообщение..." onkeypress="if(event.key==='Enter')sendMessage()">
+                  <button onclick="sendMessage()" class="btn px-4 md:px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl font-medium text-white whitespace-nowrap">📤 Отправить</button>
                 </div>
               </div>
             </div>
@@ -243,7 +247,7 @@
             <div class="glass-card p-6 mb-6">
               <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
                 <h2 class="text-xl font-semibold section-title">⏰ Расписание сообщений</h2>
-                <button onclick="openAddScheduleModal()" class="btn px-6 py-3 bg-gradient-to-r from-orange-600 to-orange-500 rounded-xl font-medium text-white">➕ Создать расписание</button>
+                <button onclick="openAddScheduleModal()" class="btn px-4 md:px-6 py-2 md:py-3 bg-gradient-to-r from-orange-600 to-orange-500 rounded-xl font-medium text-white text-sm md:text-base">➕ Создать расписание</button>
               </div>
               <div id="schedulesList"></div>
             </div>
@@ -254,7 +258,7 @@
             <div class="glass-card p-6 mb-6">
               <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
                 <h2 class="text-xl font-semibold section-title">👤 Управление пользователями</h2>
-                <button onclick="openAddUserModal()" class="btn px-6 py-3 bg-gradient-to-r from-green-600 to-green-500 rounded-xl font-medium text-white">➕ Добавить пользователя</button>
+                <button onclick="openAddUserModal()" class="btn px-4 md:px-6 py-2 md:py-3 bg-gradient-to-r from-green-600 to-green-500 rounded-xl font-medium text-white text-sm md:text-base">➕ Добавить пользователя</button>
               </div>
               <div id="usersList"></div>
             </div>
@@ -270,13 +274,12 @@
                   <input type="text" id="settingsLogin" class="input-field w-full">
                 </div>
                 <div>
-                  <label class="block text-sm text-slate-400 mb-2">Новый пароль (оставьте пустым, если не меняете)</label>
+                  <label class="block text-sm text-slate-400 mb-2">Новый пароль (оставьте пустым)</label>
                   <input type="password" id="settingsPassword" class="input-field w-full" placeholder="Новый пароль">
                 </div>
                 <button onclick="updateProfile()" class="btn px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl font-medium text-white">Сохранить изменения</button>
               </div>
             </div>
-            
             <div class="glass-card p-6">
               <h2 class="text-xl font-semibold section-title mb-6">🔒 Безопасность</h2>
               <div class="space-y-3 text-slate-400">
@@ -300,8 +303,8 @@
   </div>
   
   <!-- Modal -->
-  <div id="modal" class="modal-overlay fixed inset-0 z-50 hidden items-center justify-center">
-    <div class="modal-content w-full max-w-md p-6 animate-fade-in">
+  <div id="modal" class="modal-overlay fixed inset-0 z-50 hidden items-center justify-center p-4">
+    <div class="modal-content w-full max-w-md p-6 animate-fade-in max-h-[90vh] overflow-y-auto">
       <h2 class="text-xl font-semibold mb-6" id="modalTitle">Добавить</h2>
       <div id="modalBody"></div>
       <div class="flex gap-3 mt-6">
@@ -448,7 +451,7 @@
       }
       container.innerHTML = `
         <table class="w-full">
-          <thead><tr><th class="text-left">ID</th><th class="text-left">Имя</th><th class="text-left">Токен</th><th class="text-left">Статус</th><th class="text-left">Действия</th></tr></thead>
+          <thead><tr><th>ID</th><th>Имя</th><th>Токен</th><th>Статус</th><th>Действия</th></tr></thead>
           <tbody>
             ${bots.map(bot => `
               <tr>
@@ -457,8 +460,8 @@
                 <td><code class="text-slate-500 text-xs">${bot.token.substring(0, 20)}...</code></td>
                 <td><span class="flex items-center gap-2"><span class="status-dot ${bot.online ? 'status-online' : 'status-offline'}"></span>${bot.online ? '<span class="badge badge-green">Онлайн</span>' : '<span class="badge badge-red">Оффлайн</span>'}</span></td>
                 <td>
-                  <div class="flex gap-2">
-                    ${isAdmin ? `<button onclick="editBot(${bot.id})" class="btn px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg text-sm">✏️</button>` : ''}
+                  <div class="flex gap-2 flex-wrap">
+                    ${isAdmin ? `<button onclick="editBot(${bot.id})" class="btn px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-sm" title="Редактировать">✏️</button>` : ''}
                     <button onclick="toggleBotOnline(${bot.id}, ${!bot.online})" class="btn px-3 py-1.5 ${bot.online ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'} rounded-lg text-sm">${bot.online ? '⏸' : '▶️'}</button>
                     ${isAdmin ? `<button onclick="deleteBot(${bot.id})" class="btn px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-sm">🗑️</button>` : ''}
                   </div>
@@ -479,7 +482,7 @@
       }
       container.innerHTML = `
         <table class="w-full">
-          <thead><tr><th class="text-left">ID</th><th class="text-left">Название</th><th class="text-left">Chat ID</th><th class="text-left">Бот</th><th class="text-left">Действия</th></tr></thead>
+          <thead><tr><th>ID</th><th>Название</th><th>Chat ID</th><th>Бот</th><th>Действия</th></tr></thead>
           <tbody>
             ${groups.map(g => `
               <tr>
@@ -488,7 +491,7 @@
                 <td><code class="text-slate-500 text-sm">${g.chat_id}</code></td>
                 <td>${g.bot_name ? `<span class="badge badge-blue">${escapeHtml(g.bot_name)}</span>` : '<span class="text-red-400">Не назначен</span>'}</td>
                 <td>
-                  <div class="flex gap-2">
+                  <div class="flex gap-2 flex-wrap">
                     <button onclick="selectChat(${g.id}, '${escapeHtml(g.name)}')" class="btn px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-sm">💬</button>
                     ${isAdmin ? `<button onclick="editGroup(${g.id})" class="btn px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-sm">✏️</button>` : ''}
                     ${isAdmin ? `<button onclick="deleteGroup(${g.id})" class="btn px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-sm">🗑️</button>` : ''}
@@ -510,7 +513,7 @@
       }
       container.innerHTML = `
         <table class="w-full">
-          <thead><tr><th class="text-left">ID</th><th class="text-left">Название</th><th class="text-left">Группа</th><th class="text-left">Время</th><th class="text-left">Повтор</th><th class="text-left">Статус</th><th class="text-left">Действия</th></tr></thead>
+          <thead><tr><th>ID</th><th>Название</th><th>Группа</th><th>Время</th><th>Повтор</th><th>Статус</th><th>Действия</th></tr></thead>
           <tbody>
             ${schedules.map(s => `
               <tr>
@@ -521,7 +524,7 @@
                 <td><span class="badge ${s.repeat_type === 'once' ? 'badge-blue' : s.repeat_type === 'daily' ? 'badge-green' : 'badge-purple'}">${s.repeat_type === 'once' ? 'Один раз' : s.repeat_type === 'daily' ? 'Ежедневно' : 'Еженедельно'}</span></td>
                 <td><span class="badge ${s.status === 'active' ? 'badge-green' : 'badge-red'}">${s.status === 'active' ? 'Активно' : 'Приостановлено'}</span></td>
                 <td>
-                  <div class="flex gap-2">
+                  <div class="flex gap-2 flex-wrap">
                     <button onclick="viewScheduleLogs(${s.id})" class="btn px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-sm">📋</button>
                     ${isAdmin ? `<button onclick="editSchedule(${s.id})" class="btn px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-sm">✏️</button>` : ''}
                     <button onclick="toggleSchedule(${s.id}, '${s.status === 'active' ? 'paused' : 'active'}')" class="btn px-3 py-1.5 ${s.status === 'active' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-green-500/20 text-green-400'} rounded-lg text-sm">${s.status === 'active' ? '⏸' : '▶️'}</button>
@@ -561,7 +564,7 @@
       }
       container.innerHTML = `
         <table class="w-full">
-          <thead><tr><th class="text-left">ID</th><th class="text-left">Логин</th><th class="text-left">Роль</th><th class="text-left">Создан</th><th class="text-left">Статус</th><th class="text-left">Действия</th></tr></thead>
+          <thead><tr><th>ID</th><th>Логин</th><th>Роль</th><th>Создан</th><th>Статус</th><th>Действия</th></tr></thead>
           <tbody>
             ${users.map(u => `
               <tr>
@@ -571,9 +574,9 @@
                 <td class="text-slate-400 text-sm">${new Date(u.created_at).toLocaleDateString()}</td>
                 <td>${u.delete_request === 1 ? '<span class="badge badge-red">На удаление</span>' : '<span class="badge badge-green">Активен</span>'}</td>
                 <td>
-                  <div class="flex gap-2">
+                  <div class="flex gap-2 flex-wrap">
                     ${u.delete_request === 1 && isAdmin ? `
-                      <button onclick="approveDeleteUser(${u.id})" class="btn px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-sm">✅</button>
+                      <button onclick="approveDeleteUser(${u.id})" class="btn px-3 py-1.5 bg-green-500/20 text-green-400 rounded-lg text-sm">✅</button>
                       <button onclick="cancelDeleteUser(${u.id})" class="btn px-3 py-1.5 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm">❌</button>
                     ` : u.id !== currentUser.id && isAdmin ? `
                       <button onclick="requestDeleteUser(${u.id})" class="btn px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-sm">🗑️</button>
@@ -595,7 +598,7 @@
         return;
       }
       container.innerHTML = groups.map(g => `
-        <div class="chat-item p-4 ${currentChatGroup === g.id ? 'active' : ''}" onclick="selectChat(${g.id}, '${escapeHtml(g.name)}')">
+        <div class="chat-item ${currentChatGroup === g.id ? 'active' : ''}" onclick="selectChat(${g.id}, '${escapeHtml(g.name)}')">
           <h4 class="font-medium">${escapeHtml(g.name)}</h4>
           <p class="text-xs text-slate-500 mt-1">Бот: ${g.bot_name || 'Не назначен'}</p>
         </div>
@@ -606,14 +609,14 @@
       currentChatGroup = groupId;
       renderChatList();
       
-      document.getElementById('chatEmpty').classList.add('hidden');
-      document.getElementById('chatHeader').classList.remove('hidden');
-      document.getElementById('chatInputArea').classList.remove('hidden');
       document.getElementById('chatGroupName').textContent = name;
       
       const group = groups.find(g => g.id === groupId);
       const bot = bots.find(b => b.id === group?.bot_id);
       document.getElementById('chatBotStatus').textContent = `Бот: ${bot?.online ? '🟢 онлайн' : '🔴 оффлайн'}`;
+      
+      document.getElementById('chatHeader').classList.remove('hidden');
+      document.getElementById('chatInputArea').classList.remove('hidden');
       
       await loadChatMessages();
     }
@@ -628,7 +631,7 @@
     function renderMessages(groupId) {
       const container = document.getElementById('chatMessages');
       if (!messages[groupId] || messages[groupId].length === 0) {
-        container.innerHTML = `<div class="text-center text-slate-500"><p>Нет сообщений</p></div>`;
+        container.innerHTML = `<div class="text-center text-slate-500 flex-1 flex items-center justify-center h-full"><div><div class="text-5xl mb-4">💬</div><p>Нет сообщений</p></div></div>`;
         return;
       }
       container.innerHTML = messages[groupId].map(m => `
@@ -665,7 +668,7 @@
     }
     
     async function clearCurrentChat() {
-      if (!currentChatGroup || !confirm('Очистить сообщения этого чата?')) return;
+      if (!currentChatGroup || !confirm('Очистить сообщения чата?')) return;
       await window.electronAPI.clearMessages(currentChatGroup);
       await loadChatMessages();
       showToast('✅ Сообщения очищены');
@@ -675,7 +678,7 @@
       if (!confirm('Очистить ВСЕ сообщения?')) return;
       await window.electronAPI.clearMessages(null);
       messages = {};
-      document.getElementById('chatMessages').innerHTML = '';
+      document.getElementById('chatMessages').innerHTML = `<div class="text-center text-slate-500 flex-1 flex items-center justify-center h-full"><div><div class="text-5xl mb-4">💬</div><p>Нет сообщений</p></div></div>`;
       await loadData();
       showToast('✅ Все сообщения очищены');
     }
@@ -988,7 +991,12 @@
     async function deleteGroup(id) {
       if (!confirm('Удалить группу?')) return;
       await window.electronAPI.deleteGroup(id);
-      if (currentChatGroup === id) currentChatGroup = null;
+      if (currentChatGroup === id) {
+        currentChatGroup = null;
+        document.getElementById('chatHeader').classList.add('hidden');
+        document.getElementById('chatInputArea').classList.add('hidden');
+        document.getElementById('chatMessages').innerHTML = `<div class="text-center text-slate-500 flex-1 flex items-center justify-center h-full"><div><div class="text-5xl mb-4">💬</div><p>Выберите чат</p></div></div>`;
+      }
       await loadData();
       renderGroups();
       renderChatList();
@@ -1011,7 +1019,7 @@
     }
     
     async function requestDeleteUser(id) {
-      if (!confirm('Запросить удаление своего аккаунта?')) return;
+      if (!confirm('Запросить удаление аккаунта?')) return;
       const result = await window.electronAPI.requestDeleteUser(id);
       if (result.success) {
         showToast('✅ Запрос на удаление отправлен');
