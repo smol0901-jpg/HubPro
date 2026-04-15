@@ -9,65 +9,47 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Inter', sans-serif; background: #0a0e1a; color: #e2e8f0; min-height: 100vh; overflow-x: hidden; }
-    
     .bg-grid { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-image: linear-gradient(rgba(59,130,246,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(59,130,246,0.03) 1px, transparent 1px); background-size: 50px 50px; pointer-events: none; z-index: 0; }
     .bg-glow { position: fixed; width: 600px; height: 600px; border-radius: 50%; filter: blur(150px); opacity: 0.15; pointer-events: none; z-index: 0; }
     .bg-glow-1 { top: -200px; right: -200px; background: #3b82f6; }
     .bg-glow-2 { bottom: -200px; left: -200px; background: #8b5cf6; }
-    .bg-glow-3 { top: 50%; left: 50%; transform: translate(-50%,-50%); background: #06b6d4; opacity: 0.08; }
-    
     .app-container { position: relative; z-index: 1; }
     .glass-card { background: rgba(15,23,42,0.6); border: 1px solid rgba(148,163,184,0.1); border-radius: 20px; backdrop-filter: blur(20px); transition: all 0.4s cubic-bezier(0.4,0,0.2,1); }
-    .glass-card:hover { border-color: rgba(59,130,246,0.3); box-shadow: 0 25px 50px rgba(0,0,0,0.4), 0 0 30px rgba(59,130,246,0.1); transform: translateY(-4px); }
-    .stat-card { background: linear-gradient(135deg, rgba(15,23,42,0.8) 0%, rgba(30,41,59,0.6) 100%); border: 1px solid rgba(148,163,184,0.15); border-radius: 16px; backdrop-filter: blur(20px); transition: all 0.3s ease; }
-    .stat-card:hover { transform: translateY(-2px); border-color: rgba(59,130,246,0.4); }
-    
+    .glass-card:hover { border-color: rgba(59,130,246,0.3); box-shadow: 0 25px 50px rgba(0,0,0,0.4), 0 0 30px rgba(59,130,246,0.1); }
+    .stat-card { background: linear-gradient(135deg, rgba(15,23,42,0.8) 0%, rgba(30,41,59,0.6) 100%); border: 1px solid rgba(148,163,184,0.15); border-radius: 16px; backdrop-filter: blur(20px); }
     .btn { transition: all 0.2s cubic-bezier(0.4,0,0.2,1); position: relative; overflow: hidden; }
     .btn::before { content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent); transition: left 0.5s; }
     .btn:hover::before { left: 100%; }
     .btn:hover { transform: translateY(-2px); }
-    .btn:active { transform: translateY(0); }
-    
     .section-title { position: relative; padding-left: 16px; }
     .section-title::before { content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 4px; height: 70%; background: linear-gradient(180deg, #3b82f6, #8b5cf6); border-radius: 2px; }
-    
     .nav-btn { transition: all 0.2s ease; }
     .nav-btn:hover { background: rgba(59,130,246,0.2); }
     .nav-btn.active { background: rgba(59,130,246,0.3); border-left: 3px solid #3b82f6; }
-    
     .input-field { background: rgba(15,23,42,0.8); border: 1px solid rgba(148,163,184,0.15); border-radius: 12px; padding: 12px 16px; color: #e2e8f0; transition: all 0.2s ease; }
     .input-field:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.2); }
-    .input-field::placeholder { color: #64748b; }
-    
     .sidebar { background: rgba(15,23,42,0.8); border-right: 1px solid rgba(148,163,184,0.1); }
-    
     .status-dot { width: 8px; height: 8px; border-radius: 50%; }
     .status-online { background: #22c55e; box-shadow: 0 0 8px rgba(34,197,94,0.5); }
     .status-offline { background: #ef4444; }
-    
     .chat-container { background: rgba(15,23,42,0.4); border: 1px solid rgba(148,163,184,0.1); border-radius: 16px; overflow: hidden; }
     .chat-list { background: rgba(15,23,42,0.6); border-right: 1px solid rgba(148,163,184,0.1); }
     .chat-item { transition: all 0.2s ease; cursor: pointer; }
     .chat-item:hover { background: rgba(59,130,246,0.1); }
     .chat-item.active { background: rgba(59,130,246,0.2); border-left: 3px solid #3b82f6; }
-    
     .message.sent { background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); border-radius: 16px 16px 4px 16px; }
     .message.received { background: rgba(30,41,59,0.8); border-radius: 16px 16px 16px 4px; }
-    
     .modal-overlay { background: rgba(0,0,0,0.8); backdrop-filter: blur(8px); }
     .modal-content { background: rgba(15,23,42,0.95); border: 1px solid rgba(148,163,184,0.15); border-radius: 20px; backdrop-filter: blur(20px); }
-    
     .toast { background: rgba(15,23,42,0.95); border: 1px solid rgba(148,163,184,0.15); backdrop-filter: blur(10px); }
     .toast.success { border-color: rgba(34,197,94,0.5); }
     .toast.error { border-color: rgba(239,68,68,0.5); }
     .toast.info { border-color: rgba(59,130,246,0.5); }
-    
     table { border-collapse: separate; border-spacing: 0 8px; }
     tbody tr { background: rgba(15,23,42,0.4); transition: all 0.2s ease; }
     tbody tr:hover { background: rgba(59,130,246,0.1); }
     th { background: rgba(15,23,42,0.6) !important; color: #94a3b8; font-weight: 500; padding: 12px 16px; }
     td { padding: 12px 16px; }
-    
     .badge { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 8px; font-size: 11px; font-weight: 600; }
     .badge-blue { background: rgba(59,130,246,0.2); color: #60a5fa; }
     .badge-green { background: rgba(34,197,94,0.2); color: #4ade80; }
@@ -75,16 +57,11 @@
     .badge-purple { background: rgba(139,92,246,0.2); color: #a78bfa; }
     .badge-yellow { background: rgba(234,179,8,0.2); color: #facc15; }
     .badge-orange { background: rgba(249,115,22,0.2); color: #fb923c; }
-    
     @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     .animate-fade-in { animation: fadeIn 0.4s ease forwards; }
-    
     ::-webkit-scrollbar { width: 8px; }
     ::-webkit-scrollbar-track { background: rgba(15,23,42,0.5); }
     ::-webkit-scrollbar-thumb { background: rgba(59,130,246,0.3); border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(59,130,246,0.5); }
-    
-    /* Login Screen */
     .login-screen { background: linear-gradient(135deg, #0a0e1a 0%, #1e293b 100%); }
     .login-card { background: rgba(15,23,42,0.8); border: 1px solid rgba(148,163,184,0.15); border-radius: 24px; backdrop-filter: blur(20px); }
   </style>
@@ -93,7 +70,6 @@
   <div class="bg-grid"></div>
   <div class="bg-glow bg-glow-1"></div>
   <div class="bg-glow bg-glow-2"></div>
-  <div class="bg-glow bg-glow-3"></div>
   
   <!-- Login Screen -->
   <div id="loginScreen" class="login-screen min-h-screen flex items-center justify-center p-4">
@@ -103,7 +79,6 @@
         <h1 class="text-3xl font-bold bg-gradient-to-r from-blue-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent">HubPro</h1>
         <p class="text-slate-400 mt-2">Вход в систему</p>
       </div>
-      
       <div class="space-y-4">
         <div>
           <label class="block text-sm text-slate-400 mb-2">Логин</label>
@@ -117,7 +92,6 @@
           Войти
         </button>
       </div>
-      
       <p class="text-xs text-slate-500 text-center mt-6">🔒 AES-256 шифрование</p>
     </div>
   </div>
@@ -125,13 +99,12 @@
   <!-- Main App -->
   <div id="mainApp" class="app-container p-4 md:p-6 hidden">
     <div class="max-w-7xl mx-auto">
-      <!-- Header -->
       <header class="mb-8 animate-fade-in">
         <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div class="flex items-center gap-4">
             <div class="w-14 h-14 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center text-2xl shadow-lg shadow-blue-500/20">🤖</div>
             <div>
-              <h1 class="text-3xl font-bold bg-gradient-to-r from-blue-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent">HubPro</h1>
+              <h1 class="text-3xl font-bold bg-gradient-to-r from-blue-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent">HubPro <span id="appVersion" class="text-lg text-slate-400"></span></h1>
               <p class="text-slate-400 mt-1 text-sm">Профессиональный центр управления Telegram ботами</p>
             </div>
           </div>
@@ -148,7 +121,6 @@
       </header>
       
       <div class="flex gap-6">
-        <!-- Sidebar -->
         <aside class="sidebar w-64 rounded-2xl p-4 h-fit sticky top-4">
           <nav class="space-y-2">
             <button class="nav-btn active w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left" data-view="dashboard">
@@ -172,127 +144,70 @@
             <button class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left" data-view="settings">
               <span class="text-xl">⚙️</span><span>Настройки</span>
             </button>
+            <button class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left" data-view="info">
+              <span class="text-xl">ℹ️</span><span>О программе</span>
+            </button>
           </nav>
           
           <div class="mt-8 pt-6 border-t border-slate-700/50">
             <h3 class="text-xs uppercase text-slate-500 font-semibold mb-4 tracking-wider">📈 Статистика</h3>
             <div class="space-y-4">
-              <div class="flex items-center justify-between">
-                <span class="text-slate-400 text-sm">Ботов</span>
-                <span class="badge badge-blue" id="statBots">0</span>
-              </div>
-              <div class="flex items-center justify-between">
-                <span class="text-slate-400 text-sm">Групп</span>
-                <span class="badge badge-purple" id="statGroups">0</span>
-              </div>
-              <div class="flex items-center justify-between">
-                <span class="text-slate-400 text-sm">Расписаний</span>
-                <span class="badge badge-orange" id="statSchedules">0</span>
-              </div>
-              <div class="flex items-center justify-between">
-                <span class="text-slate-400 text-sm">Сообщений</span>
-                <span class="badge badge-green" id="statMessages">0</span>
-              </div>
+              <div class="flex items-center justify-between"><span class="text-slate-400 text-sm">Ботов</span><span class="badge badge-blue" id="statBots">0</span></div>
+              <div class="flex items-center justify-between"><span class="text-slate-400 text-sm">Групп</span><span class="badge badge-purple" id="statGroups">0</span></div>
+              <div class="flex items-center justify-between"><span class="text-slate-400 text-sm">Расписаний</span><span class="badge badge-orange" id="statSchedules">0</span></div>
+              <div class="flex items-center justify-between"><span class="text-slate-400 text-sm">Сообщений</span><span class="badge badge-green" id="statMessages">0</span></div>
             </div>
-          </div>
-          
-          <div class="mt-6 pt-4 border-t border-slate-700/50">
-            <p class="text-xs text-slate-500 text-center">HubPro v1.0.0</p>
-            <p class="text-xs text-slate-600 text-center mt-1">🔒 AES-256 + Login</p>
           </div>
         </aside>
         
-        <!-- Main Content -->
         <main class="flex-1" id="mainContent">
           <!-- Dashboard -->
           <div id="view-dashboard" class="view-content">
             <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
-              <div class="stat-card p-6">
-                <div class="flex items-center gap-4">
-                  <div class="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center text-2xl">🤖</div>
-                  <div>
-                    <p class="text-slate-400 text-sm">Ботов</p>
-                    <p class="text-3xl font-bold text-white" id="dashBots">0</p>
-                  </div>
-                </div>
-              </div>
-              <div class="stat-card p-6">
-                <div class="flex items-center gap-4">
-                  <div class="w-12 h-12 bg-purple-500/20 rounded-xl flex items-center justify-center text-2xl">👥</div>
-                  <div>
-                    <p class="text-slate-400 text-sm">Групп</p>
-                    <p class="text-3xl font-bold text-white" id="dashGroups">0</p>
-                  </div>
-                </div>
-              </div>
-              <div class="stat-card p-6">
-                <div class="flex items-center gap-4">
-                  <div class="w-12 h-12 bg-orange-500/20 rounded-xl flex items-center justify-center text-2xl">⏰</div>
-                  <div>
-                    <p class="text-slate-400 text-sm">Расписаний</p>
-                    <p class="text-3xl font-bold text-white" id="dashSchedules">0</p>
-                  </div>
-                </div>
-              </div>
-              <div class="stat-card p-6">
-                <div class="flex items-center gap-4">
-                  <div class="w-12 h-12 bg-green-500/20 rounded-xl flex items-center justify-center text-2xl">💬</div>
-                  <div>
-                    <p class="text-slate-400 text-sm">Сообщений</p>
-                    <p class="text-3xl font-bold text-white" id="dashMessages">0</p>
-                  </div>
-                </div>
-              </div>
+              <div class="stat-card p-6"><div class="flex items-center gap-4"><div class="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center text-2xl">🤖</div><div><p class="text-slate-400 text-sm">Ботов</p><p class="text-3xl font-bold text-white" id="dashBots">0</p></div></div></div>
+              <div class="stat-card p-6"><div class="flex items-center gap-4"><div class="w-12 h-12 bg-purple-500/20 rounded-xl flex items-center justify-center text-2xl">👥</div><div><p class="text-slate-400 text-sm">Групп</p><p class="text-3xl font-bold text-white" id="dashGroups">0</p></div></div></div>
+              <div class="stat-card p-6"><div class="flex items-center gap-4"><div class="w-12 h-12 bg-orange-500/20 rounded-xl flex items-center justify-center text-2xl">⏰</div><div><p class="text-slate-400 text-sm">Расписаний</p><p class="text-3xl font-bold text-white" id="dashSchedules">0</p></div></div></div>
+              <div class="stat-card p-6"><div class="flex items-center gap-4"><div class="w-12 h-12 bg-green-500/20 rounded-xl flex items-center justify-center text-2xl">💬</div><div><p class="text-slate-400 text-sm">Сообщений</p><p class="text-3xl font-bold text-white" id="dashMessages">0</p></div></div></div>
             </div>
-            
             <div class="glass-card p-6">
               <h2 class="text-xl font-semibold section-title mb-6">🚀 Быстрые действия</h2>
               <div class="flex flex-wrap gap-4">
-                <button onclick="openAddBotModal()" class="btn px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 rounded-xl font-medium text-white shadow-lg shadow-blue-500/20">
-                  ➕ Добавить бота
-                </button>
-                <button onclick="openAddGroupModal()" class="btn px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 rounded-xl font-medium text-white shadow-lg shadow-purple-500/20">
-                  ➕ Добавить группу
-                </button>
-                <button onclick="openAddScheduleModal()" class="btn px-6 py-3 bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-500 hover:to-orange-400 rounded-xl font-medium text-white shadow-lg shadow-orange-500/20">
-                  ⏰ Создать расписание
-                </button>
+                <button onclick="openAddBotModal()" class="btn px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-500 rounded-xl font-medium text-white shadow-lg">➕ Добавить бота</button>
+                <button onclick="openAddGroupModal()" class="btn px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-500 rounded-xl font-medium text-white shadow-lg">➕ Добавить группу</button>
+                <button onclick="openAddScheduleModal()" class="btn px-6 py-3 bg-gradient-to-r from-orange-600 to-orange-500 rounded-xl font-medium text-white shadow-lg">⏰ Создать расписание</button>
               </div>
             </div>
           </div>
           
-          <!-- Bots View -->
+          <!-- Bots -->
           <div id="view-bots" class="view-content hidden">
             <div class="glass-card p-6 mb-6">
               <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
                 <h2 class="text-xl font-semibold section-title">🤖 Управление ботами</h2>
-                <button onclick="openAddBotModal()" class="btn px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 rounded-xl font-medium text-white shadow-lg shadow-blue-500/20">
-                  ➕ Добавить бота
-                </button>
+                <button onclick="openAddBotModal()" class="btn px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-500 rounded-xl font-medium text-white">➕ Добавить бота</button>
               </div>
               <div id="botsList"></div>
             </div>
           </div>
           
-          <!-- Groups View -->
+          <!-- Groups -->
           <div id="view-groups" class="view-content hidden">
             <div class="glass-card p-6 mb-6">
               <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
                 <h2 class="text-xl font-semibold section-title">👥 Управление группами</h2>
-                <button onclick="openAddGroupModal()" class="btn px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 rounded-xl font-medium text-white shadow-lg shadow-purple-500/20">
-                  ➕ Добавить группу
-                </button>
+                <button onclick="openAddGroupModal()" class="btn px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-500 rounded-xl font-medium text-white">➕ Добавить группу</button>
               </div>
               <div id="groupsList"></div>
             </div>
           </div>
           
-          <!-- Chat View -->
+          <!-- Chat -->
           <div id="view-chat" class="view-content hidden">
             <div class="chat-container" style="height: calc(100vh - 200px);">
               <div class="chat-list w-80 flex flex-col">
-                <div class="p-4 border-b border-slate-700/50">
+                <div class="p-4 border-b border-slate-700/50 flex justify-between items-center">
                   <h3 class="font-semibold text-lg">💬 Чаты</h3>
+                  <button onclick="clearAllMessages()" class="btn px-2 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-xs">🗑️ Всё</button>
                 </div>
                 <div class="flex-1 overflow-y-auto" id="chatGroupsList"></div>
               </div>
@@ -303,64 +218,62 @@
                       <h3 class="font-semibold" id="chatGroupName">Группа</h3>
                       <p class="text-sm text-slate-400" id="chatBotStatus">Бот: оффлайн</p>
                     </div>
-                    <button onclick="loadChatMessages()" class="btn px-3 py-1.5 bg-slate-700/50 hover:bg-slate-700 rounded-lg text-sm">🔄</button>
+                    <div class="flex gap-2">
+                      <button onclick="clearCurrentChat()" class="btn px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm">🗑️ Очистить</button>
+                      <button onclick="loadChatMessages()" class="btn px-3 py-1.5 bg-slate-700/50 hover:bg-slate-700 rounded-lg text-sm">🔄</button>
+                    </div>
                   </div>
                 </div>
                 <div class="flex-1 overflow-y-auto p-4 space-y-4" id="chatMessages"></div>
                 <div id="chatInputArea" class="p-4 border-t border-slate-700/50 hidden">
                   <div class="flex gap-3">
                     <input type="text" id="chatInput" class="input-field flex-1" placeholder="Введите сообщение..." onkeypress="if(event.key==='Enter')sendMessage()">
-                    <button onclick="sendMessage()" class="btn px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 rounded-xl font-medium text-white">
-                      📤 Отправить
-                    </button>
+                    <button onclick="sendMessage()" class="btn px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl font-medium text-white">📤 Отправить</button>
                   </div>
                 </div>
                 <div id="chatEmpty" class="flex-1 flex items-center justify-center">
-                  <div class="text-center text-slate-500">
-                    <div class="text-5xl mb-4">💬</div>
-                    <p>Выберите чат для начала общения</p>
-                  </div>
+                  <div class="text-center text-slate-500"><div class="text-5xl mb-4">💬</div><p>Выберите чат для начала общения</p></div>
                 </div>
               </div>
             </div>
           </div>
           
-          <!-- Schedules View -->
+          <!-- Schedules -->
           <div id="view-schedules" class="view-content hidden">
             <div class="glass-card p-6 mb-6">
               <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
                 <h2 class="text-xl font-semibold section-title">⏰ Расписание сообщений</h2>
-                <button onclick="openAddScheduleModal()" class="btn px-6 py-3 bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-500 hover:to-orange-400 rounded-xl font-medium text-white shadow-lg shadow-orange-500/20">
-                  ➕ Создать расписание
-                </button>
+                <button onclick="openAddScheduleModal()" class="btn px-6 py-3 bg-gradient-to-r from-orange-600 to-orange-500 rounded-xl font-medium text-white">➕ Создать расписание</button>
               </div>
               <div id="schedulesList"></div>
             </div>
           </div>
           
-          <!-- Users View -->
+          <!-- Users -->
           <div id="view-users" class="view-content hidden">
             <div class="glass-card p-6 mb-6">
               <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
                 <h2 class="text-xl font-semibold section-title">👤 Управление пользователями</h2>
-                <button onclick="openAddUserModal()" class="btn px-6 py-3 bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-400 rounded-xl font-medium text-white shadow-lg shadow-green-500/20">
-                  ➕ Добавить пользователя
-                </button>
+                <button onclick="openAddUserModal()" class="btn px-6 py-3 bg-gradient-to-r from-green-600 to-green-500 rounded-xl font-medium text-white">➕ Добавить пользователя</button>
               </div>
               <div id="usersList"></div>
             </div>
           </div>
           
-          <!-- Settings View -->
+          <!-- Settings -->
           <div id="view-settings" class="view-content hidden">
             <div class="glass-card p-6 mb-6">
-              <h2 class="text-xl font-semibold section-title mb-6">⚙️ Настройки</h2>
-              <div class="space-y-6">
+              <h2 class="text-xl font-semibold section-title mb-6">⚙️ Настройки профиля</h2>
+              <div class="space-y-4 max-w-md">
                 <div>
-                  <label class="block text-sm text-slate-400 mb-2">Интервал опроса (мс)</label>
-                  <input type="number" class="input-field w-full md:w-64" id="settingsPolling" value="3000" min="1000" max="10000">
-                  <p class="text-xs text-slate-500 mt-2">Рекомендуемое значение: 3000 мс</p>
+                  <label class="block text-sm text-slate-400 mb-2">Логин</label>
+                  <input type="text" id="settingsLogin" class="input-field w-full">
                 </div>
+                <div>
+                  <label class="block text-sm text-slate-400 mb-2">Новый пароль (оставьте пустым, если не меняете)</label>
+                  <input type="password" id="settingsPassword" class="input-field w-full" placeholder="Новый пароль">
+                </div>
+                <button onclick="updateProfile()" class="btn px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl font-medium text-white">Сохранить изменения</button>
               </div>
             </div>
             
@@ -369,20 +282,16 @@
               <div class="space-y-3 text-slate-400">
                 <p class="flex items-center gap-2"><span class="text-green-400">✅</span> Токены шифруются AES-256-CBC</p>
                 <p class="flex items-center gap-2"><span class="text-green-400">✅</span> Пароли хешируются SHA-256</p>
-                <p class="flex items-center gap-2"><span class="text-green-400">✅</span> Ключ генерируется из userData</p>
                 <p class="flex items-center gap-2"><span class="text-green-400">✅</span> Context Isolation включён</p>
               </div>
             </div>
-            
-            <div class="glass-card p-6 mt-6">
-              <h2 class="text-xl font-semibold section-title mb-6">ℹ️ О приложении</h2>
-              <div class="space-y-3 text-slate-400">
-                <p><strong class="text-white">Версия:</strong> 1.0.0</p>
-                <p><strong class="text-white">База данных:</strong> SQLite</p>
-                <p><strong class="text-white">Платформа:</strong> Electron</p>
-                <p><strong class="text-white">Дизайн:</strong> Glassmorphism UI</p>
-                <p class="mt-4 text-sm"><strong class="text-white">Разработано с помощью:</strong> NEURAL_ARCHITECT_PREMIUM++ v8.3 ULTIMATE</p>
-              </div>
+          </div>
+          
+          <!-- Info -->
+          <div id="view-info" class="view-content hidden">
+            <div class="glass-card p-6 mb-6">
+              <h2 class="text-xl font-semibold section-title mb-6">ℹ️ Информация о версиях</h2>
+              <div id="versionInfo"></div>
             </div>
           </div>
         </main>
@@ -397,12 +306,12 @@
       <div id="modalBody"></div>
       <div class="flex gap-3 mt-6">
         <button onclick="closeModal()" class="btn flex-1 px-4 py-3 bg-slate-700 hover:bg-slate-600 rounded-xl font-medium">Отмена</button>
-        <button id="modalSaveBtn" class="btn flex-1 px-4 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 rounded-xl font-medium text-white">Сохранить</button>
+        <button id="modalSaveBtn" class="btn flex-1 px-4 py-3 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl font-medium text-white">Сохранить</button>
       </div>
     </div>
   </div>
   
-  <!-- Toast Container -->
+  <!-- Toast -->
   <div id="toastContainer" class="fixed bottom-6 right-6 z-50 space-y-3"></div>
   
   <script>
@@ -415,8 +324,14 @@
     let messages = {};
     let currentUser = null;
     let isAdmin = false;
+    let appVersion = '1.0.0';
+    let updateInfo = [];
     
     document.addEventListener('DOMContentLoaded', async () => {
+      const v = await window.electronAPI.getVersion();
+      appVersion = v.version;
+      updateInfo = v.updates;
+      document.getElementById('appVersion').textContent = 'v' + appVersion;
       window.electronAPI.onTelegramUpdate(handleIncomingMessage);
       window.electronAPI.onScheduleExecuted(handleScheduleExecuted);
       window.electronAPI.onUpdateAvailable(() => showToast('📥 Доступно обновление...', 'info'));
@@ -426,11 +341,7 @@
     async function doLogin() {
       const login = document.getElementById('loginUsername').value.trim();
       const password = document.getElementById('loginPassword').value.trim();
-      
-      if (!login || !password) {
-        showToast('Заполните все поля', 'error');
-        return;
-      }
+      if (!login || !password) return showToast('Заполните все поля', 'error');
       
       const result = await window.electronAPI.login({ login, password });
       
@@ -442,14 +353,14 @@
         document.getElementById('mainApp').classList.remove('hidden');
         document.getElementById('currentUser').textContent = result.user.login + (isAdmin ? ' (Admin)' : '');
         
-        // Скрываем кнопку пользователей для не-админов
-        if (!isAdmin) {
-          document.getElementById('usersNavBtn').classList.add('hidden');
-        }
+        if (!isAdmin) document.getElementById('usersNavBtn').classList.add('hidden');
+        
+        document.getElementById('settingsLogin').value = result.user.login;
         
         await loadData();
         renderView();
         setupNavigation();
+        renderVersionInfo();
       } else {
         showToast(result.error || 'Ошибка входа', 'error');
       }
@@ -513,6 +424,22 @@
       }
     }
     
+    function renderVersionInfo() {
+      const container = document.getElementById('versionInfo');
+      container.innerHTML = updateInfo.map(v => `
+        <div class="mb-6 p-4 bg-slate-800/50 rounded-xl">
+          <div class="flex items-center gap-3 mb-3">
+            <span class="badge badge-purple text-lg px-4 py-2">v${v.version}</span>
+            <span class="text-slate-400 text-sm">${v.date}</span>
+          </div>
+          <ul class="space-y-2">
+            ${v.changes.map(c => `<li class="flex items-center gap-2 text-slate-300"><span class="text-green-400">✓</span> ${c}</li>`).join('')}
+          </ul>
+        </div>
+      `).join('');
+    }
+    
+    // ============ BOTS ============
     function renderBots() {
       const container = document.getElementById('botsList');
       if (bots.length === 0) {
@@ -528,18 +455,12 @@
                 <td><code class="text-blue-400">${bot.id}</code></td>
                 <td class="font-medium">${escapeHtml(bot.name)}</td>
                 <td><code class="text-slate-500 text-xs">${bot.token.substring(0, 20)}...</code></td>
-                <td>
-                  <span class="flex items-center gap-2">
-                    <span class="status-dot ${bot.online ? 'status-online' : 'status-offline'}"></span>
-                    ${bot.online ? '<span class="badge badge-green">Онлайн</span>' : '<span class="badge badge-red">Оффлайн</span>'}
-                  </span>
-                </td>
+                <td><span class="flex items-center gap-2"><span class="status-dot ${bot.online ? 'status-online' : 'status-offline'}"></span>${bot.online ? '<span class="badge badge-green">Онлайн</span>' : '<span class="badge badge-red">Оффлайн</span>'}</span></td>
                 <td>
                   <div class="flex gap-2">
-                    <button onclick="toggleBotOnline(${bot.id}, ${!bot.online})" class="btn px-3 py-1.5 ${bot.online ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400' : 'bg-green-500/20 hover:bg-green-500/30 text-green-400'} rounded-lg text-sm">
-                      ${bot.online ? '⏸' : '▶️'} ${bot.online ? 'Выключить' : 'Включить'}
-                    </button>
-                    <button onclick="deleteBot(${bot.id})" class="btn px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm">🗑️</button>
+                    ${isAdmin ? `<button onclick="editBot(${bot.id})" class="btn px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg text-sm">✏️</button>` : ''}
+                    <button onclick="toggleBotOnline(${bot.id}, ${!bot.online})" class="btn px-3 py-1.5 ${bot.online ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'} rounded-lg text-sm">${bot.online ? '⏸' : '▶️'}</button>
+                    ${isAdmin ? `<button onclick="deleteBot(${bot.id})" class="btn px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-sm">🗑️</button>` : ''}
                   </div>
                 </td>
               </tr>
@@ -549,6 +470,7 @@
       `;
     }
     
+    // ============ GROUPS ============
     function renderGroups() {
       const container = document.getElementById('groupsList');
       if (groups.length === 0) {
@@ -567,8 +489,9 @@
                 <td>${g.bot_name ? `<span class="badge badge-blue">${escapeHtml(g.bot_name)}</span>` : '<span class="text-red-400">Не назначен</span>'}</td>
                 <td>
                   <div class="flex gap-2">
-                    <button onclick="selectChat(${g.id}, '${escapeHtml(g.name)}')" class="btn px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg text-sm">💬</button>
-                    <button onclick="deleteGroup(${g.id})" class="btn px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm">🗑️</button>
+                    <button onclick="selectChat(${g.id}, '${escapeHtml(g.name)}')" class="btn px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-sm">💬</button>
+                    ${isAdmin ? `<button onclick="editGroup(${g.id})" class="btn px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-sm">✏️</button>` : ''}
+                    ${isAdmin ? `<button onclick="deleteGroup(${g.id})" class="btn px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-sm">🗑️</button>` : ''}
                   </div>
                 </td>
               </tr>
@@ -578,6 +501,7 @@
       `;
     }
     
+    // ============ SCHEDULES ============
     function renderSchedules() {
       const container = document.getElementById('schedulesList');
       if (schedules.length === 0) {
@@ -594,14 +518,14 @@
                 <td class="font-medium">${escapeHtml(s.name)}</td>
                 <td>${escapeHtml(s.group_name || '-')}</td>
                 <td><code class="text-slate-400">${s.scheduled_time}</code></td>
-                <td><span class="badge ${s.repeat_type === 'once' ? 'badge-blue' : s.repeat_type === 'daily' ? 'badge-green' : s.repeat_type === 'weekly' ? 'badge-purple' : 'badge-yellow'}">${s.repeat_type === 'once' ? 'Один раз' : s.repeat_type === 'daily' ? 'Ежедневно' : s.repeat_type === 'weekly' ? 'Еженедельно' : 'Ежемесячно'}</span></td>
+                <td><span class="badge ${s.repeat_type === 'once' ? 'badge-blue' : s.repeat_type === 'daily' ? 'badge-green' : 'badge-purple'}">${s.repeat_type === 'once' ? 'Один раз' : s.repeat_type === 'daily' ? 'Ежедневно' : 'Еженедельно'}</span></td>
                 <td><span class="badge ${s.status === 'active' ? 'badge-green' : 'badge-red'}">${s.status === 'active' ? 'Активно' : 'Приостановлено'}</span></td>
                 <td>
                   <div class="flex gap-2">
-                    <button onclick="toggleSchedule(${s.id}, '${s.status === 'active' ? 'paused' : 'active'}')" class="btn px-3 py-1.5 ${s.status === 'active' ? 'bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400' : 'bg-green-500/20 hover:bg-green-500/30 text-green-400'} rounded-lg text-sm">
-                      ${s.status === 'active' ? '⏸' : '▶️'}
-                    </button>
-                    <button onclick="deleteSchedule(${s.id})" class="btn px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm">🗑️</button>
+                    <button onclick="viewScheduleLogs(${s.id})" class="btn px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-sm">📋</button>
+                    ${isAdmin ? `<button onclick="editSchedule(${s.id})" class="btn px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-sm">✏️</button>` : ''}
+                    <button onclick="toggleSchedule(${s.id}, '${s.status === 'active' ? 'paused' : 'active'}')" class="btn px-3 py-1.5 ${s.status === 'active' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-green-500/20 text-green-400'} rounded-lg text-sm">${s.status === 'active' ? '⏸' : '▶️'}</button>
+                    ${isAdmin ? `<button onclick="deleteSchedule(${s.id})" class="btn px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-sm">🗑️</button>` : ''}
                   </div>
                 </td>
               </tr>
@@ -611,6 +535,24 @@
       `;
     }
     
+    async function viewScheduleLogs(scheduleId) {
+      const logs = await window.electronAPI.getScheduleLogs(scheduleId);
+      document.getElementById('modalTitle').textContent = '📋 Лог отправок';
+      document.getElementById('modalBody').innerHTML = logs.length ? `
+        <div class="space-y-2 max-h-64 overflow-y-auto">
+          ${logs.map(l => `<div class="p-2 rounded ${l.status === 'success' ? 'bg-green-500/10' : 'bg-red-500/10'}">
+            <span class="${l.status === 'success' ? 'text-green-400' : 'text-red-400'}">${l.status === 'success' ? '✅' : '❌'}</span>
+            <span class="text-slate-400 text-sm ml-2">${new Date(l.executed_at).toLocaleString()}</span>
+            ${l.error ? `<div class="text-red-400 text-xs mt-1">${escapeHtml(l.error)}</div>` : ''}
+          </div>`).join('')}
+        </div>
+      ` : '<p class="text-slate-500">Нет логов</p>';
+      document.getElementById('modalSaveBtn').onclick = closeModal;
+      document.getElementById('modalSaveBtn').textContent = 'Закрыть';
+      openModal();
+    }
+    
+    // ============ USERS ============
     function renderUsers() {
       const container = document.getElementById('usersList');
       if (users.length === 0) {
@@ -631,10 +573,10 @@
                 <td>
                   <div class="flex gap-2">
                     ${u.delete_request === 1 && isAdmin ? `
-                      <button onclick="approveDeleteUser(${u.id})" class="btn px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm">✅ Подтвердить</button>
-                      <button onclick="cancelDeleteUser(${u.id})" class="btn px-3 py-1.5 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400 rounded-lg text-sm">❌ Отмена</button>
-                    ` : u.id !== currentUser.id ? `
-                      <button onclick="requestDeleteUser(${u.id})" class="btn px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm">🗑️ Удалить</button>
+                      <button onclick="approveDeleteUser(${u.id})" class="btn px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-sm">✅</button>
+                      <button onclick="cancelDeleteUser(${u.id})" class="btn px-3 py-1.5 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm">❌</button>
+                    ` : u.id !== currentUser.id && isAdmin ? `
+                      <button onclick="requestDeleteUser(${u.id})" class="btn px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-sm">🗑️</button>
                     ` : ''}
                   </div>
                 </td>
@@ -645,6 +587,7 @@
       `;
     }
     
+    // ============ CHAT ============
     function renderChatList() {
       const container = document.getElementById('chatGroupsList');
       if (groups.length === 0) {
@@ -721,40 +664,34 @@
       }
     }
     
-    function handleIncomingMessage(data) {
-      if (!messages[data.groupId]) messages[data.groupId] = [];
-      messages[data.groupId].push({ text: data.text, sent: false, sender: data.sender, time: data.time });
-      if (currentChatGroup === data.groupId) renderMessages(data.groupId);
-      loadData();
+    async function clearCurrentChat() {
+      if (!currentChatGroup || !confirm('Очистить сообщения этого чата?')) return;
+      await window.electronAPI.clearMessages(currentChatGroup);
+      await loadChatMessages();
+      showToast('✅ Сообщения очищены');
     }
     
-    function handleScheduleExecuted(data) {
-      if (data.success) {
-        showToast('✅ Автосообщение отправлено!');
-      } else {
-        showToast('❌ Ошибка автоотправки: ' + data.error, 'error');
-      }
-      loadData();
+    async function clearAllMessages() {
+      if (!confirm('Очистить ВСЕ сообщения?')) return;
+      await window.electronAPI.clearMessages(null);
+      messages = {};
+      document.getElementById('chatMessages').innerHTML = '';
+      await loadData();
+      showToast('✅ Все сообщения очищены');
     }
     
-    // ============ MODAL FUNCTIONS ============
+    // ============ MODALS ============
     function openAddBotModal() {
       document.getElementById('modalTitle').textContent = '🤖 Добавить бота';
       document.getElementById('modalBody').innerHTML = `
         <div class="space-y-4">
-          <div>
-            <label class="block text-sm text-slate-400 mb-2">Имя бота</label>
-            <input type="text" id="botName" class="input-field w-full" placeholder="Мой бот">
-          </div>
-          <div>
-            <label class="block text-sm text-slate-400 mb-2">Telegram токен</label>
-            <input type="text" id="botToken" class="input-field w-full" placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz">
-          </div>
+          <div><label class="block text-sm text-slate-400 mb-2">Имя бота</label><input type="text" id="botName" class="input-field w-full" placeholder="Мой бот"></div>
+          <div><label class="block text-sm text-slate-400 mb-2">Telegram токен</label><input type="text" id="botToken" class="input-field w-full" placeholder="123456789:ABC..."></div>
           <p class="text-xs text-slate-500">🔒 Токен будет зашифрован AES-256</p>
-          <p class="text-xs text-slate-500">Получить токен: @BotFather → /newbot</p>
         </div>
       `;
       document.getElementById('modalSaveBtn').onclick = saveBot;
+      document.getElementById('modalSaveBtn').textContent = 'Сохранить';
       openModal();
     }
     
@@ -769,7 +706,42 @@
       
       const result = await window.electronAPI.addBot({ name, token });
       if (result.success) {
-        showToast('✅ Бот добавлен и зашифрован!');
+        showToast('✅ Бот добавлен!');
+        closeModal();
+        await loadData();
+        renderBots();
+      } else {
+        showToast('❌ ' + result.error, 'error');
+      }
+    }
+    
+    function editBot(id) {
+      const bot = bots.find(b => b.id === id);
+      document.getElementById('modalTitle').textContent = '✏️ Редактировать бота';
+      document.getElementById('modalBody').innerHTML = `
+        <div class="space-y-4">
+          <div><label class="block text-sm text-slate-400 mb-2">Имя бота</label><input type="text" id="botName" class="input-field w-full" value="${escapeHtml(bot.name)}"></div>
+          <div><label class="block text-sm text-slate-400 mb-2">Новый токен (оставьте пустым)</label><input type="text" id="botToken" class="input-field w-full" placeholder="Новый токен"></div>
+        </div>
+      `;
+      document.getElementById('modalSaveBtn').onclick = () => saveEditBot(id);
+      document.getElementById('modalSaveBtn').textContent = 'Сохранить';
+      openModal();
+    }
+    
+    async function saveEditBot(id) {
+      const name = document.getElementById('botName').value.trim();
+      const token = document.getElementById('botToken').value.trim();
+      const bot = bots.find(b => b.id === id);
+      
+      if (token) {
+        const check = await window.electronAPI.checkBot(token);
+        if (!check.ok) return showToast('❌ Неверный токен', 'error');
+      }
+      
+      const result = await window.electronAPI.updateBot({ id, name, token: token || null, online: bot.online });
+      if (result.success) {
+        showToast('✅ Бот обновлён!');
         closeModal();
         await loadData();
         renderBots();
@@ -784,23 +756,13 @@
       document.getElementById('modalTitle').textContent = '👥 Добавить группу';
       document.getElementById('modalBody').innerHTML = `
         <div class="space-y-4">
-          <div>
-            <label class="block text-sm text-slate-400 mb-2">Название</label>
-            <input type="text" id="groupName" class="input-field w-full" placeholder="Моя группа">
-          </div>
-          <div>
-            <label class="block text-sm text-slate-400 mb-2">Chat ID</label>
-            <input type="text" id="groupChatId" class="input-field w-full" placeholder="-123456789">
-          </div>
-          <div>
-            <label class="block text-sm text-slate-400 mb-2">Бот</label>
-            <select id="groupBotId" class="input-field w-full">
-              ${bots.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}
-            </select>
-          </div>
+          <div><label class="block text-sm text-slate-400 mb-2">Название</label><input type="text" id="groupName" class="input-field w-full" placeholder="Моя группа"></div>
+          <div><label class="block text-sm text-slate-400 mb-2">Chat ID</label><input type="text" id="groupChatId" class="input-field w-full" placeholder="-123456789"></div>
+          <div><label class="block text-sm text-slate-400 mb-2">Бот</label><select id="groupBotId" class="input-field w-full">${bots.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}</select></div>
         </div>
       `;
       document.getElementById('modalSaveBtn').onclick = saveGroup;
+      document.getElementById('modalSaveBtn').textContent = 'Сохранить';
       openModal();
     }
     
@@ -822,6 +784,38 @@
       }
     }
     
+    function editGroup(id) {
+      const group = groups.find(g => g.id === id);
+      document.getElementById('modalTitle').textContent = '✏️ Редактировать группу';
+      document.getElementById('modalBody').innerHTML = `
+        <div class="space-y-4">
+          <div><label class="block text-sm text-slate-400 mb-2">Название</label><input type="text" id="groupName" class="input-field w-full" value="${escapeHtml(group.name)}"></div>
+          <div><label class="block text-sm text-slate-400 mb-2">Chat ID</label><input type="text" id="groupChatId" class="input-field w-full" value="${group.chat_id}"></div>
+          <div><label class="block text-sm text-slate-400 mb-2">Бот</label><select id="groupBotId" class="input-field w-full">${bots.map(b => `<option value="${b.id}" ${b.id === group.bot_id ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('')}</select></div>
+        </div>
+      `;
+      document.getElementById('modalSaveBtn').onclick = () => saveEditGroup(id);
+      document.getElementById('modalSaveBtn').textContent = 'Сохранить';
+      openModal();
+    }
+    
+    async function saveEditGroup(id) {
+      const name = document.getElementById('groupName').value.trim();
+      const chatId = document.getElementById('groupChatId').value.trim();
+      const botId = parseInt(document.getElementById('groupBotId').value);
+      
+      const result = await window.electronAPI.updateGroup({ id, name, chatId, botId });
+      if (result.success) {
+        showToast('✅ Группа обновлена!');
+        closeModal();
+        await loadData();
+        renderGroups();
+        renderChatList();
+      } else {
+        showToast('❌ ' + result.error, 'error');
+      }
+    }
+    
     function openAddScheduleModal() {
       if (bots.length === 0 || groups.length === 0) return showToast('Сначала добавьте бота и группу', 'error');
       
@@ -832,48 +826,19 @@
       document.getElementById('modalTitle').textContent = '⏰ Создать расписание';
       document.getElementById('modalBody').innerHTML = `
         <div class="space-y-4">
-          <div>
-            <label class="block text-sm text-slate-400 mb-2">Название</label>
-            <input type="text" id="scheduleName" class="input-field w-full" placeholder="Ежедневная рассылка">
-          </div>
-          <div>
-            <label class="block text-sm text-slate-400 mb-2">Сообщение</label>
-            <textarea id="scheduleText" class="input-field w-full h-24" placeholder="Текст сообщения..."></textarea>
-          </div>
-          <div>
-            <label class="block text-sm text-slate-400 mb-2">Группа</label>
-            <select id="scheduleGroupId" class="input-field w-full">
-              ${groups.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('')}
-            </select>
-          </div>
-          <div>
-            <label class="block text-sm text-slate-400 mb-2">Бот</label>
-            <select id="scheduleBotId" class="input-field w-full">
-              ${bots.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}
-            </select>
-          </div>
+          <div><label class="block text-sm text-slate-400 mb-2">Название</label><input type="text" id="scheduleName" class="input-field w-full" placeholder="Рассылка"></div>
+          <div><label class="block text-sm text-slate-400 mb-2">Сообщение</label><textarea id="scheduleText" class="input-field w-full h-24" placeholder="Текст..."></textarea></div>
+          <div><label class="block text-sm text-slate-400 mb-2">Группа</label><select id="scheduleGroupId" class="input-field w-full">${groups.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('')}</select></div>
+          <div><label class="block text-sm text-slate-400 mb-2">Бот</label><select id="scheduleBotId" class="input-field w-full">${bots.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}</select></div>
           <div class="grid grid-cols-2 gap-4">
-            <div>
-              <label class="block text-sm text-slate-400 mb-2">Дата</label>
-              <input type="date" id="scheduleDate" class="input-field w-full" value="${defaultDate}">
-            </div>
-            <div>
-              <label class="block text-sm text-slate-400 mb-2">Время</label>
-              <input type="time" id="scheduleTime" class="input-field w-full" value="${defaultTime}">
-            </div>
+            <div><label class="block text-sm text-slate-400 mb-2">Дата</label><input type="date" id="scheduleDate" class="input-field w-full" value="${defaultDate}"></div>
+            <div><label class="block text-sm text-slate-400 mb-2">Время</label><input type="time" id="scheduleTime" class="input-field w-full" value="${defaultTime}"></div>
           </div>
-          <div>
-            <label class="block text-sm text-slate-400 mb-2">Повтор</label>
-            <select id="scheduleRepeat" class="input-field w-full">
-              <option value="once">Один раз</option>
-              <option value="daily">Ежедневно</option>
-              <option value="weekly">Еженедельно</option>
-              <option value="monthly">Ежемесячно</option>
-            </select>
-          </div>
+          <div><label class="block text-sm text-slate-400 mb-2">Повтор</label><select id="scheduleRepeat" class="input-field w-full"><option value="once">Один раз</option><option value="daily">Ежедневно</option><option value="weekly">Еженедельно</option></select></div>
         </div>
       `;
       document.getElementById('modalSaveBtn').onclick = saveSchedule;
+      document.getElementById('modalSaveBtn').textContent = 'Сохранить';
       openModal();
     }
     
@@ -901,30 +866,62 @@
       }
     }
     
+    function editSchedule(id) {
+      const s = schedules.find(s => s.id === id);
+      document.getElementById('modalTitle').textContent = '✏️ Редактировать расписание';
+      document.getElementById('modalBody').innerHTML = `
+        <div class="space-y-4">
+          <div><label class="block text-sm text-slate-400 mb-2">Название</label><input type="text" id="scheduleName" class="input-field w-full" value="${escapeHtml(s.name)}"></div>
+          <div><label class="block text-sm text-slate-400 mb-2">Сообщение</label><textarea id="scheduleText" class="input-field w-full h-24">${escapeHtml(s.text)}</textarea></div>
+          <div><label class="block text-sm text-slate-400 mb-2">Группа</label><select id="scheduleGroupId" class="input-field w-full">${groups.map(g => `<option value="${g.id}" ${g.id === s.group_id ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}</select></div>
+          <div><label class="block text-sm text-slate-400 mb-2">Бот</label><select id="scheduleBotId" class="input-field w-full">${bots.map(b => `<option value="${b.id}" ${b.id === s.bot_id ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('')}</select></div>
+          <div class="grid grid-cols-2 gap-4">
+            <div><label class="block text-sm text-slate-400 mb-2">Дата</label><input type="date" id="scheduleDate" class="input-field w-full" value="${s.scheduled_time.split('T')[0]}"></div>
+            <div><label class="block text-sm text-slate-400 mb-2">Время</label><input type="time" id="scheduleTime" class="input-field w-full" value="${s.scheduled_time.slice(11, 16)}"></div>
+          </div>
+          <div><label class="block text-sm text-slate-400 mb-2">Повтор</label><select id="scheduleRepeat" class="input-field w-full"><option value="once" ${s.repeat_type === 'once' ? 'selected' : ''}>Один раз</option><option value="daily" ${s.repeat_type === 'daily' ? 'selected' : ''}>Ежедневно</option><option value="weekly" ${s.repeat_type === 'weekly' ? 'selected' : ''}>Еженедельно</option></select></div>
+        </div>
+      `;
+      document.getElementById('modalSaveBtn').onclick = () => saveEditSchedule(id);
+      document.getElementById('modalSaveBtn').textContent = 'Сохранить';
+      openModal();
+    }
+    
+    async function saveEditSchedule(id) {
+      const name = document.getElementById('scheduleName').value.trim();
+      const text = document.getElementById('scheduleText').value.trim();
+      const groupId = parseInt(document.getElementById('scheduleGroupId').value);
+      const botId = parseInt(document.getElementById('scheduleBotId').value);
+      const date = document.getElementById('scheduleDate').value;
+      const time = document.getElementById('scheduleTime').value;
+      const repeatType = document.getElementById('scheduleRepeat').value;
+      
+      const scheduledTime = `${date}T${time}`;
+      const result = await window.electronAPI.updateSchedule({ id, name, text, groupId, botId, scheduledTime, repeatType });
+      
+      if (result.success) {
+        showToast('✅ Расписание обновлено!');
+        closeModal();
+        await loadData();
+        renderSchedules();
+      } else {
+        showToast('❌ ' + result.error, 'error');
+      }
+    }
+    
     function openAddUserModal() {
-      if (!isAdmin) return showToast('Только админ может добавлять пользователей', 'error');
+      if (!isAdmin) return showToast('Только админ может добавлять', 'error');
       
       document.getElementById('modalTitle').textContent = '👤 Добавить пользователя';
       document.getElementById('modalBody').innerHTML = `
         <div class="space-y-4">
-          <div>
-            <label class="block text-sm text-slate-400 mb-2">Логин</label>
-            <input type="text" id="newUserLogin" class="input-field w-full" placeholder="Логин">
-          </div>
-          <div>
-            <label class="block text-sm text-slate-400 mb-2">Пароль</label>
-            <input type="password" id="newUserPassword" class="input-field w-full" placeholder="Пароль">
-          </div>
-          <div>
-            <label class="block text-sm text-slate-400 mb-2">Роль</label>
-            <select id="newUserRole" class="input-field w-full">
-              <option value="user">Пользователь</option>
-              <option value="admin">Админ</option>
-            </select>
-          </div>
+          <div><label class="block text-sm text-slate-400 mb-2">Логин</label><input type="text" id="newUserLogin" class="input-field w-full"></div>
+          <div><label class="block text-sm text-slate-400 mb-2">Пароль</label><input type="password" id="newUserPassword" class="input-field w-full"></div>
+          <div><label class="block text-sm text-slate-400 mb-2">Роль</label><select id="newUserRole" class="input-field w-full"><option value="user">Пользователь</option><option value="admin">Админ</option></select></div>
         </div>
       `;
       document.getElementById('modalSaveBtn').onclick = saveUser;
+      document.getElementById('modalSaveBtn').textContent = 'Сохранить';
       openModal();
     }
     
@@ -936,7 +933,6 @@
       if (!login || !password) return showToast('Заполните все поля', 'error');
       
       const result = await window.electronAPI.addUser({ login, password, role });
-      
       if (result.success) {
         showToast('✅ Пользователь добавлен!');
         closeModal();
@@ -947,51 +943,31 @@
       }
     }
     
-    async function requestDeleteUser(id) {
-      if (!confirm('Запросить удаление пользователя?')) return;
-      const result = await window.electronAPI.requestDeleteUser(id);
+    async function updateProfile() {
+      const login = document.getElementById('settingsLogin').value.trim();
+      const password = document.getElementById('settingsPassword').value.trim();
+      
+      const result = await window.electronAPI.updateUser({
+        id: currentUser.id,
+        login: login !== currentUser.login ? login : null,
+        password: password || null,
+        currentUserId: currentUser.id,
+        currentUserRole: currentUser.role
+      });
+      
       if (result.success) {
-        showToast('✅ Запрос на удаление отправлен');
-        await loadData();
-        renderUsers();
+        showToast('✅ Профиль обновлён!');
+        if (login !== currentUser.login) {
+          currentUser.login = login;
+          document.getElementById('currentUser').textContent = login + (isAdmin ? ' (Admin)' : '');
+        }
+        document.getElementById('settingsPassword').value = '';
       } else {
         showToast('❌ ' + result.error, 'error');
       }
     }
     
-    async function approveDeleteUser(id) {
-      if (!confirm('Подтвердить удаление пользователя?')) return;
-      const result = await window.electronAPI.approveDeleteUser(id);
-      if (result.success) {
-        showToast('✅ Пользователь удалён');
-        await loadData();
-        renderUsers();
-      } else {
-        showToast('❌ ' + result.error, 'error');
-      }
-    }
-    
-    async function cancelDeleteUser(id) {
-      const result = await window.electronAPI.cancelDeleteUser(id);
-      if (result.success) {
-        showToast('✅ Запрос на удаление отменён');
-        await loadData();
-        renderUsers();
-      } else {
-        showToast('❌ ' + result.error, 'error');
-      }
-    }
-    
-    function openModal() {
-      document.getElementById('modal').classList.remove('hidden');
-      document.getElementById('modal').classList.add('flex');
-    }
-    
-    function closeModal() {
-      document.getElementById('modal').classList.add('hidden');
-      document.getElementById('modal').classList.remove('flex');
-    }
-    
+    // ============ ACTIONS ============
     async function toggleBotOnline(id, online) {
       const bot = bots.find(b => b.id === id);
       await window.electronAPI.updateBot({ id, name: bot.name, token: bot.token, online });
@@ -1034,6 +1010,64 @@
       showToast('🗑️ Расписание удалено');
     }
     
+    async function requestDeleteUser(id) {
+      if (!confirm('Запросить удаление своего аккаунта?')) return;
+      const result = await window.electronAPI.requestDeleteUser(id);
+      if (result.success) {
+        showToast('✅ Запрос на удаление отправлен');
+        await loadData();
+        renderUsers();
+      } else {
+        showToast('❌ ' + result.error, 'error');
+      }
+    }
+    
+    async function approveDeleteUser(id) {
+      if (!confirm('Подтвердить удаление?')) return;
+      const result = await window.electronAPI.approveDeleteUser(id);
+      if (result.success) {
+        showToast('✅ Пользователь удалён');
+        await loadData();
+        renderUsers();
+      } else {
+        showToast('❌ ' + result.error, 'error');
+      }
+    }
+    
+    async function cancelDeleteUser(id) {
+      const result = await window.electronAPI.cancelDeleteUser(id);
+      if (result.success) {
+        showToast('✅ Запрос отменён');
+        await loadData();
+        renderUsers();
+      } else {
+        showToast('❌ ' + result.error, 'error');
+      }
+    }
+    
+    function openModal() {
+      document.getElementById('modal').classList.remove('hidden');
+      document.getElementById('modal').classList.add('flex');
+    }
+    
+    function closeModal() {
+      document.getElementById('modal').classList.add('hidden');
+      document.getElementById('modal').classList.remove('flex');
+    }
+    
+    function handleIncomingMessage(data) {
+      if (!messages[data.groupId]) messages[data.groupId] = [];
+      messages[data.groupId].push({ text: data.text, sent: false, sender: data.sender, time: data.time });
+      if (currentChatGroup === data.groupId) renderMessages(data.groupId);
+      loadData();
+    }
+    
+    function handleScheduleExecuted(data) {
+      if (data.success) showToast('✅ Автосообщение отправлено!');
+      else showToast('❌ Ошибка: ' + data.error, 'error');
+      loadData();
+    }
+    
     function showToast(message, type = 'success') {
       const container = document.getElementById('toastContainer');
       const toast = document.createElement('div');
@@ -1041,11 +1075,6 @@
       toast.innerHTML = `<span>${message}</span>`;
       container.appendChild(toast);
       setTimeout(() => toast.remove(), 3000);
-    }
-    
-    async function checkForUpdates() {
-      showToast('⏳ Проверка обновлений...', 'info');
-      await window.electronAPI.checkForUpdates();
     }
     
     function escapeHtml(text) {
