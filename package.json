@@ -1,7 +1,7 @@
 {
   "name": "hubpro",
-  "version": "1.0.0",
-  "description": "Профессиональный центр управления Telegram ботами",
+  "version": "1.1.0",
+  "description": "Профессиональный центр управления Telegram ботами с автообновлением",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -37,8 +37,7 @@
           "target": "nsis",
           "arch": ["x64"]
         }
-      ],
-      "icon": "build/icon.ico"
+      ]
     },
     "nsis": {
       "oneClick": false,
