@@ -16,6 +16,8 @@
     .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(139,92,246,0.4); }
     .btn-secondary { background: rgba(255,255,255,0.1); color: white; padding: 10px 20px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); cursor: pointer; }
     .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+    .btn-green { background: linear-gradient(135deg, #10b981, #059669); color: white; padding: 10px 20px; border-radius: 8px; border: none; cursor: pointer; }
+    .btn-green:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(16,185,129,0.4); }
     .nav-item { padding: 12px 16px; border-radius: 8px; cursor: pointer; transition: all 0.2s; color: rgba(255,255,255,0.7); }
     .nav-item:hover, .nav-item.active { background: rgba(139,92,246,0.2); color: white; }
     .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
@@ -56,6 +58,7 @@
         <div class="nav-item" onclick="showSection('groups')">👥 Группы</div>
         <div class="nav-item" onclick="showSection('chat')">💬 Чат</div>
         <div class="nav-item" onclick="showSection('schedule')">📅 Расписание</div>
+        <div class="nav-item" onclick="showSection('users')">👤 Пользователи</div>
         <div class="nav-item" onclick="showSection('settings')">⚙️ Настройки</div>
       </nav>
       <div class="mt-auto pt-4 border-t border-white/10">
@@ -63,7 +66,6 @@
         <button onclick="logout()" class="btn-secondary w-full text-sm">Выйти</button>
       </div>
     </div>
-
 
     <!-- Content -->
     <div class="flex-1 p-6 overflow-auto">
@@ -86,7 +88,10 @@
       <div id="bots" class="section hidden">
         <div class="flex justify-between items-center mb-6">
           <h2 class="text-2xl font-bold">🤖 Боты</h2>
-          <button onclick="openAddBotModal()" class="btn-primary">➕ Добавить бота</button>
+          <div class="flex gap-2">
+            <button onclick="openBotFather()" class="btn-green">🤖 Создать через BotFather</button>
+            <button onclick="openAddBotModal()" class="btn-primary">➕ Добавить бота</button>
+          </div>
         </div>
         <div id="botsList" class="grid grid-cols-2 gap-4"></div>
       </div>
@@ -128,6 +133,15 @@
         <div id="schedulesList" class="space-y-4"></div>
       </div>
 
+      <!-- Users -->
+      <div id="users" class="section hidden">
+        <div class="flex justify-between items-center mb-6">
+          <h2 class="text-2xl font-bold">👤 Пользователи</h2>
+          <button onclick="openAddUserModal()" class="btn-primary">➕ Добавить пользователя</button>
+        </div>
+        <div id="usersList" class="grid grid-cols-2 gap-4"></div>
+      </div>
+
       <!-- Settings -->
       <div id="settings" class="section hidden">
         <h2 class="text-2xl font-bold mb-6">⚙️ Настройки</h2>
@@ -146,10 +160,6 @@
             </div>
             <button onclick="document.getElementById('importFile').click()" class="btn-secondary">Импорт</button>
             <input type="file" id="importFile" class="hidden" accept=".json" onchange="importData(this)">
-          </div>
-          <div class="pt-4 border-t border-white/10">
-            <div class="font-bold mb-2">👨‍💻 Пользователи</div>
-            <div id="usersList" class="space-y-2"></div>
           </div>
           <div class="pt-4 border-t border-white/10">
             <div class="font-bold mb-2">ℹ️ О программе</div>
@@ -177,9 +187,8 @@
 
   <script>
     let currentUser = null;
-    let bots = [], groups = [], messages = [], schedules = [];
+    let bots = [], groups = [], messages = [], schedules = [], users = [];
     let currentChatGroup = null;
-
 
     async function login() {
       const login = document.getElementById('loginUsername').value.trim();
@@ -207,6 +216,7 @@
       bots = await window.electronAPI.getBots();
       groups = await window.electronAPI.getGroups();
       schedules = await window.electronAPI.getSchedules();
+      users = await window.electronAPI.getUsers();
       const stats = await window.electronAPI.getStats();
       document.getElementById('statBots').textContent = stats.botCount;
       document.getElementById('statGroups').textContent = stats.groupCount;
@@ -215,8 +225,8 @@
       renderBots();
       renderGroups();
       renderSchedules();
-      renderChatList();
       renderUsers();
+      renderChatList();
       loadAbout();
     }
 
@@ -240,7 +250,7 @@
             <button onclick="deleteBot(${b.id})" class="btn-secondary text-sm py-1 px-3">🗑️</button>
           </div>
         </div>
-      `).join('') || '<div class="text-slate-400">Нет ботов</div>';
+      `).join('') || '<div class="text-slate-400">Нет ботов. Нажмите "Создать через BotFather" или "Добавить бота"</div>';
     }
 
     function renderGroups() {
@@ -256,6 +266,21 @@
           </div>
         </div>
       `).join('') || '<div class="text-slate-400">Нет групп</div>';
+    }
+
+    function renderUsers() {
+      document.getElementById('usersList').innerHTML = users.map(u => `
+        <div class="glass p-4 rounded-xl">
+          <div class="flex justify-between items-start mb-2">
+            <div class="font-bold">${escapeHtml(u.login)}</div>
+            <span class="px-2 py-1 rounded text-xs ${u.role === 'admin' ? 'bg-purple-500/20 text-purple-400' : 'bg-blue-500/20 text-blue-400'}">${u.role === 'admin' ? '👑 Админ' : '👤 Пользователь'}</span>
+          </div>
+          <div class="text-sm text-slate-400 mb-2">Создан: ${new Date(u.created_at).toLocaleDateString()}</div>
+          <div class="flex gap-2">
+            ${currentUser.role === 'admin' && u.id !== currentUser.id ? `<button onclick="deleteUser(${u.id})" class="btn-secondary text-sm py-1 px-3">🗑️ Удалить</button>` : ''}
+          </div>
+        </div>
+      `).join('') || '<div class="text-slate-400">Нет пользователей</div>';
     }
 
     function renderChatList() {
@@ -317,16 +342,6 @@
       `).join('') || '<div class="text-slate-400">Нет расписаний</div>';
     }
 
-    async function renderUsers() {
-      const users = await window.electronAPI.getUsers();
-      document.getElementById('usersList').innerHTML = users.map(u => `
-        <div class="flex justify-between items-center text-sm">
-          <span>${escapeHtml(u.login)} (${u.role})</span>
-          ${currentUser.role === 'admin' && u.id !== currentUser.id ? `<button onclick="deleteUser(${u.id})" class="text-red-400">🗑️</button>` : ''}
-        </div>
-      `).join('');
-    }
-
     function loadAbout() {
       window.electronAPI.getVersion().then(v => {
         document.getElementById('aboutInfo').innerHTML = `
@@ -337,6 +352,12 @@
       });
     }
 
+    // BotFather
+    function openBotFather() {
+      window.open('https://t.me/BotFather', '_blank');
+      showToast('Откройте @BotFather в Telegram для создания бота');
+    }
+
     // Modals
     function openAddBotModal() {
       document.getElementById('modalTitle').textContent = '🤖 Добавить бота';
@@ -344,6 +365,9 @@
         <div class="space-y-4">
           <div><label class="block text-sm text-slate-400 mb-2">Имя бота</label><input type="text" id="botName" class="input-field w-full" placeholder="Мой бот"></div>
           <div><label class="block text-sm text-slate-400 mb-2">Токен бота</label><input type="text" id="botToken" class="input-field w-full" placeholder="123456789:ABC..."></div>
+          <div class="text-sm text-slate-400">
+            <a href="https://t.me/BotFather" target="_blank" class="text-purple-400 hover:underline">Создать бота через @BotFather</a>
+          </div>
         </div>
       `;
       document.getElementById('modalSaveBtn').onclick = saveBot;
@@ -469,6 +493,44 @@
       await loadData();
     }
 
+    // Users
+    function openAddUserModal() {
+      if (currentUser.role !== 'admin') return showToast('Только админ может добавлять пользователей', 'error');
+      document.getElementById('modalTitle').textContent = '👤 Добавить пользователя';
+      document.getElementById('modalBody').innerHTML = `
+        <div class="space-y-4">
+          <div><label class="block text-sm text-slate-400 mb-2">Логин</label><input type="text" id="userLogin" class="input-field w-full" placeholder="Логин"></div>
+          <div><label class="block text-sm text-slate-400 mb-2">Пароль</label><input type="password" id="userPassword" class="input-field w-full" placeholder="Пароль"></div>
+          <div><label class="block text-sm text-slate-400 mb-2">Роль</label><select id="userRole" class="input-field w-full"><option value="user">Пользователь</option><option value="admin">Админ</option></select></div>
+        </div>
+      `;
+      document.getElementById('modalSaveBtn').onclick = saveUser;
+      document.getElementById('modalSaveBtn').textContent = 'Сохранить';
+      openModal();
+    }
+
+    async function saveUser() {
+      const login = document.getElementById('userLogin').value.trim();
+      const password = document.getElementById('userPassword').value;
+      const role = document.getElementById('userRole').value;
+      if (!login || !password) return showToast('Заполните все поля', 'error');
+      const result = await window.electronAPI.addUser({ login, password, role });
+      if (result.success) {
+        showToast('✅ Пользователь добавлен!');
+        closeModal();
+        await loadData();
+      } else {
+        showToast('❌ ' + result.error, 'error');
+      }
+    }
+
+    async function deleteUser(id) {
+      if (!confirm('Удалить пользователя?')) return;
+      await window.electronAPI.deleteUser(id);
+      showToast('✅ Пользователь удалён');
+      await loadData();
+    }
+
     function openAddScheduleModal() {
       if (groups.length === 0 || bots.length === 0) return showToast('Сначала добавьте бота и группу', 'error');
       document.getElementById('modalTitle').textContent = '📅 Создать расписание';
@@ -515,13 +577,6 @@
       await window.electronAPI.deleteSchedule(id);
       showToast('✅ Расписание удалено');
       await loadData();
-    }
-
-    async function deleteUser(id) {
-      if (!confirm('Удалить пользователя?')) return;
-      await window.electronAPI.deleteUser(id);
-      showToast('✅ Пользователь удалён');
-      await renderUsers();
     }
 
     async function exportData() {
