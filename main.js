@@ -4,11 +4,11 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
-const VERSION = '1.2.1';
+const VERSION = '1.2.2';
 const UPDATE_INFO = [
-  { version: '1.2.1', date: '2026-04-16', changes: ['Исправлена миграция БД для topic_ids', 'Автоматическое добавление колонок'] },
-  { version: '1.2.0', date: '2026-04-15', changes: ['Экспорт/импорт', 'Topics', 'Веб-режим'] },
-  { version: '1.1.0', date: '2026-04-15', changes: ['Очистка сообщений', 'Редактирование', 'Логи'] }
+  { version: '1.2.2', date: '2026-04-16', changes: ['Добавлена вкладка Пользователи', 'Кнопка создания бота через BotFather', 'Исправлена миграция БД'] },
+  { version: '1.2.1', date: '2026-04-16', changes: ['Исправлена миграция БД для topic_ids'] },
+  { version: '1.2.0', date: '2026-04-15', changes: ['Экспорт/импорт данных', 'Отправка в темы (topics)', 'Запуск в браузере'] }
 ];
 
 let win, tray, pollingIntervals = {}, botOffsets = {}, db, scheduleIntervals = [];
@@ -25,7 +25,6 @@ function initDatabase() {
   const dbPath = path.join(app.getPath('userData'), 'hubpro.db');
   db = new Database(dbPath);
   
-  // Создаём таблицы
   db.exec(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, login TEXT UNIQUE, password TEXT, role TEXT DEFAULT 'user', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, delete_request INTEGER DEFAULT 0);
     CREATE TABLE IF NOT EXISTS bots (id INTEGER PRIMARY KEY, name TEXT, token TEXT UNIQUE, online INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY, name TEXT, chat_id TEXT, bot_id INTEGER, topic_ids TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE);
@@ -34,8 +33,7 @@ function initDatabase() {
     CREATE TABLE IF NOT EXISTS schedule_logs (id INTEGER PRIMARY KEY, schedule_id INTEGER, status TEXT, error TEXT, executed_at DATETIME DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);`);
   
-  // Миграция: добавляем колонку topic_ids если её нет
-  try { db.exec(`ALTER TABLE groups ADD COLUMN topic_ids TEXT`); } catch (e) { /* уже есть */ }
+  try { db.exec(`ALTER TABLE groups ADD COLUMN topic_ids TEXT`); } catch (e) {}
   
   if (!db.prepare('SELECT id FROM users WHERE login = ?').get('NeuralAP')) {
     db.prepare('INSERT INTO users (login, password, role) VALUES (?, ?, ?)').run('NeuralAP', hashPassword('0901Admin'), 'admin');
@@ -52,6 +50,7 @@ function registerIPCHandlers() {
   ipcMain.handle('auth:getUsers', () => db.prepare('SELECT id, login, role, created_at, delete_request FROM users ORDER BY id').all());
   ipcMain.handle('auth:addUser', (_, { login, password, role }) => { try { if (db.prepare('SELECT id FROM users WHERE login = ?').get(login)) return { success: false, error: 'Логин занят' }; db.prepare('INSERT INTO users (login, password, role) VALUES (?, ?, ?)').run(login, hashPassword(password), role || 'user'); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('auth:updateUser', (_, { id, login, password, currentUserId, currentUserRole }) => { try { if (id !== currentUserId && currentUserRole !== 'admin') return { success: false, error: 'Нет прав' }; if (login) { if (db.prepare('SELECT id FROM users WHERE login = ? AND id != ?').get(login, id)) return { success: false, error: 'Логин занят' }; db.prepare('UPDATE users SET login = ? WHERE id = ?').run(login, id); } if (password) db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashPassword(password), id); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
+  ipcMain.handle('auth:deleteUser', (_, id) => { try { db.prepare('DELETE FROM users WHERE id = ?').run(id); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('auth:requestDelete', (_, id) => { try { db.prepare('UPDATE users SET delete_request = 1 WHERE id = ?').run(id); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('auth:approveDelete', (_, id) => { try { db.prepare('DELETE FROM users WHERE id = ?').run(id); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('auth:cancelDelete', (_, id) => { try { db.prepare('UPDATE users SET delete_request = 0 WHERE id = ?').run(id); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
