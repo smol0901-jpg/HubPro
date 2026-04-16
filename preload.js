@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getUsers: () => ipcRenderer.invoke('auth:getUsers'),
   addUser: (data) => ipcRenderer.invoke('auth:addUser', data),
   updateUser: (data) => ipcRenderer.invoke('auth:updateUser', data),
+  deleteUser: (id) => ipcRenderer.invoke('auth:deleteUser', id),
   requestDeleteUser: (id) => ipcRenderer.invoke('auth:requestDelete', id),
   approveDeleteUser: (id) => ipcRenderer.invoke('auth:approveDelete', id),
   cancelDeleteUser: (id) => ipcRenderer.invoke('auth:cancelDelete', id),
