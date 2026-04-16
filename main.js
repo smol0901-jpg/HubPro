@@ -4,11 +4,11 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
-const VERSION = '1.2.0';
+const VERSION = '1.2.1';
 const UPDATE_INFO = [
-  { version: '1.2.0', date: '2026-04-15', changes: ['Экспорт/импорт данных', 'Отправка в темы (topics)', 'Запуск в браузере', 'Исправлена миграция БД'] },
-  { version: '1.1.0', date: '2026-04-15', changes: ['Очистка сообщений чатов', 'Пользователи могут менять логин и пароль', 'Редактирование ботов и групп', 'Редактирование расписания', 'Лог отправки сообщений', 'Ограничение прав пользователей', 'Информационный блок версий'] },
-  { version: '1.0.0', date: '2026-04-13', changes: ['Первая версия', 'Управление ботами и группами', 'Шифрование токенов AES-256', 'Система авторизации', 'Расписание сообщений'] }
+  { version: '1.2.1', date: '2026-04-16', changes: ['Исправлена миграция БД для topic_ids', 'Автоматическое добавление колонок'] },
+  { version: '1.2.0', date: '2026-04-15', changes: ['Экспорт/импорт', 'Topics', 'Веб-режим'] },
+  { version: '1.1.0', date: '2026-04-15', changes: ['Очистка сообщений', 'Редактирование', 'Логи'] }
 ];
 
 let win, tray, pollingIntervals = {}, botOffsets = {}, db, scheduleIntervals = [];
@@ -34,20 +34,12 @@ function initDatabase() {
     CREATE TABLE IF NOT EXISTS schedule_logs (id INTEGER PRIMARY KEY, schedule_id INTEGER, status TEXT, error TEXT, executed_at DATETIME DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);`);
   
-  // МИГРАЦИЯ: Добавляем колонку topic_ids если её нет
-  try {
-    db.exec(`ALTER TABLE groups ADD COLUMN topic_ids TEXT`);
-    console.log('Migration: added topic_ids column');
-  } catch (e) {
-    // Колонка уже существует - игнорируем
-  }
+  // Миграция: добавляем колонку topic_ids если её нет
+  try { db.exec(`ALTER TABLE groups ADD COLUMN topic_ids TEXT`); } catch (e) { /* уже есть */ }
   
-  // Создаём админа если нет
   if (!db.prepare('SELECT id FROM users WHERE login = ?').get('NeuralAP')) {
     db.prepare('INSERT INTO users (login, password, role) VALUES (?, ?, ?)').run('NeuralAP', hashPassword('0901Admin'), 'admin');
-    console.log('Admin created: NeuralAP / 0901Admin');
   }
-  
   console.log('Database:', dbPath);
   return db;
 }
