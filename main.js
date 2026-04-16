@@ -6,7 +6,7 @@ const crypto = require('crypto');
 
 const VERSION = '1.2.0';
 const UPDATE_INFO = [
-  { version: '1.2.0', date: '2026-04-15', changes: ['Добавлен экспорт/импорт данных (Excel)', 'Отправка сообщений в темы (topics) группы', 'Возможность выбора нескольких тем', 'Инструкция по запуску в браузере', 'Улучшенное автообновление'] },
+  { version: '1.2.0', date: '2026-04-15', changes: ['Экспорт/импорт данных', 'Отправка в темы (topics)', 'Запуск в браузере', 'Исправлена миграция БД'] },
   { version: '1.1.0', date: '2026-04-15', changes: ['Очистка сообщений чатов', 'Пользователи могут менять логин и пароль', 'Редактирование ботов и групп', 'Редактирование расписания', 'Лог отправки сообщений', 'Ограничение прав пользователей', 'Информационный блок версий'] },
   { version: '1.0.0', date: '2026-04-13', changes: ['Первая версия', 'Управление ботами и группами', 'Шифрование токенов AES-256', 'Система авторизации', 'Расписание сообщений'] }
 ];
@@ -17,13 +17,15 @@ const ENCRYPTION_KEY = crypto.scryptSync(app.getPath('userData'), 'hubpro-salt',
 const IV_LENGTH = 16;
 
 function encrypt(text) { if (!text) return text; const iv = crypto.randomBytes(IV_LENGTH); const cipher = crypto.createCipheriv('aes-256-cbc', ENCRYPTION_KEY, iv); let encrypted = cipher.update(text, 'utf8', 'hex'); encrypted += cipher.final('hex'); return iv.toString('hex') + ':' + encrypted; }
-function decrypt(text) { if (!text || !text.includes(':')) return text; try { const parts = text.split(':'); const iv = Buffer.from(parts[0], 'hex'); const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv); let decrypted = decipher.update(encrypted = parts[1], 'hex', 'utf8'); decrypted += decipher.final('utf8'); return decrypted; } catch (e) { return text; } }
+function decrypt(text) { if (!text || !text.includes(':')) return text; try { const parts = text.split(':'); const iv = Buffer.from(parts[0], 'hex'); const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv); let decrypted = decipher.update(parts[1], 'hex', 'utf8'); decrypted += decipher.final('utf8'); return decrypted; } catch (e) { return text; } }
 function hashPassword(password) { return crypto.createHash('sha256').update(password).digest('hex'); }
 
 function initDatabase() {
   const Database = require('better-sqlite3');
   const dbPath = path.join(app.getPath('userData'), 'hubpro.db');
   db = new Database(dbPath);
+  
+  // Создаём таблицы
   db.exec(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, login TEXT UNIQUE, password TEXT, role TEXT DEFAULT 'user', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, delete_request INTEGER DEFAULT 0);
     CREATE TABLE IF NOT EXISTS bots (id INTEGER PRIMARY KEY, name TEXT, token TEXT UNIQUE, online INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY, name TEXT, chat_id TEXT, bot_id INTEGER, topic_ids TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE);
@@ -31,7 +33,21 @@ function initDatabase() {
     CREATE TABLE IF NOT EXISTS schedules (id INTEGER PRIMARY KEY, name TEXT, text TEXT, group_id INTEGER, bot_id INTEGER, scheduled_time TEXT, repeat_type TEXT DEFAULT 'once', status TEXT DEFAULT 'pending', last_executed DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE, FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS schedule_logs (id INTEGER PRIMARY KEY, schedule_id INTEGER, status TEXT, error TEXT, executed_at DATETIME DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);`);
-  if (!db.prepare('SELECT id FROM users WHERE login = ?').get('NeuralAP')) db.prepare('INSERT INTO users (login, password, role) VALUES (?, ?, ?)').run('NeuralAP', hashPassword('0901Admin'), 'admin');
+  
+  // МИГРАЦИЯ: Добавляем колонку topic_ids если её нет
+  try {
+    db.exec(`ALTER TABLE groups ADD COLUMN topic_ids TEXT`);
+    console.log('Migration: added topic_ids column');
+  } catch (e) {
+    // Колонка уже существует - игнорируем
+  }
+  
+  // Создаём админа если нет
+  if (!db.prepare('SELECT id FROM users WHERE login = ?').get('NeuralAP')) {
+    db.prepare('INSERT INTO users (login, password, role) VALUES (?, ?, ?)').run('NeuralAP', hashPassword('0901Admin'), 'admin');
+    console.log('Admin created: NeuralAP / 0901Admin');
+  }
+  
   console.log('Database:', dbPath);
   return db;
 }
