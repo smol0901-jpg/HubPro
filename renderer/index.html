@@ -20,6 +20,7 @@
     .btn-red { background: linear-gradient(135deg, #ef4444, #dc2626); }
     .nav-item { padding: 12px 16px; border-radius: 8px; cursor: pointer; transition: all 0.2s; color: rgba(255,255,255,0.7); }
     .nav-item:hover, .nav-item.active { background: rgba(139,92,246,0.2); color: white; }
+    .nav-item.hidden { display: none; }
     .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
     .modal.show { display: flex; }
     .modal-content { background: #1e1e3f; border-radius: 16px; padding: 24px; max-width: 600px; width: 90%; max-height: 90vh; overflow-y: auto; }
@@ -33,6 +34,10 @@
     .badge-admin { background: rgba(139,92,246,0.2); color: #8b5cf6; }
     .badge-helper { background: rgba(245,158,11,0.2); color: #f59e0b; }
     .badge-user { background: rgba(59,130,246,0.2); color: #3b82f6; }
+    .alert-critical { border-left: 4px solid #ef4444; background: rgba(239,68,68,0.1); }
+    .alert-high { border-left: 4px solid #f59e0b; background: rgba(245,158,11,0.1); }
+    .alert-medium { border-left: 4px solid #3b82f6; background: rgba(59,130,246,0.1); }
+    .alert-low { border-left: 4px solid #10b981; background: rgba(16,185,129,0.1); }
     ::-webkit-scrollbar { width: 8px; }
     ::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
     ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
@@ -48,27 +53,15 @@
         <input type="password" id="loginPassword" class="input-field w-full" placeholder="Пароль">
         <button onclick="login()" class="btn-primary w-full">Войти</button>
       </div>
-      <div class="mt-4 text-xs text-slate-500 text-center">
-        <p>Админ: NeuralAP / 0901Admin</p>
-        <p>Помощник: HelpNeural / admin000</p>
-      </div>
     </div>
   </div>
 
   <div id="mainApp" class="hidden flex h-screen">
     <div class="w-64 glass p-4 flex flex-col">
       <h2 class="text-xl font-bold mb-4 px-2">📱 HubPro</h2>
-      <div id="notificationBadge" class="hidden px-2 py-1 mb-2 text-xs bg-red-500/20 text-red-400 rounded">Новых уведомлений: <span id="unreadCount">0</span></div>
-      <nav class="space-y-1 flex-1">
-        <div class="nav-item active" onclick="showSection('dashboard')">📊 Дашборд</div>
-        <div class="nav-item" onclick="showSection('bots')">🤖 Боты</div>
-        <div class="nav-item" onclick="showSection('groups')">👥 Группы</div>
-        <div class="nav-item" onclick="showSection('chat')">💬 Чат</div>
-        <div class="nav-item" onclick="showSection('schedule')">📅 Расписание</div>
-        <div class="nav-item admin-only" onclick="showSection('users')">👤 Пользователи</div>
-        <div class="nav-item" onclick="showSection('notifications')">🔔 Уведомления</div>
-        <div class="nav-item" onclick="showSection('activity')">📝 История</div>
-        <div class="nav-item" onclick="showSection('settings')">⚙️ Настройки</div>
+      <div id="notificationBadge" class="hidden px-2 py-1 mb-2 text-xs bg-red-500/20 text-red-400 rounded">Новых: <span id="unreadCount">0</span></div>
+      <nav class="space-y-1 flex-1" id="mainNav">
+        <!-- Tabs will be shown/hidden based on role -->
       </nav>
       <div class="mt-auto pt-4 border-t border-white/10">
         <div id="userInfo" class="text-sm text-slate-400 mb-2"></div>
@@ -77,104 +70,75 @@
     </div>
 
     <div class="flex-1 p-6 overflow-auto">
-      <div id="dashboard" class="section">
+      <!-- Dashboard -->
+      <div id="dashboard" class="section hidden">
         <h2 class="text-2xl font-bold mb-6">📊 Дашборд</h2>
         <div class="grid grid-cols-4 gap-4 mb-6">
-          <div class="glass p-4 rounded-xl"><div class="text-3xl font-bold" id="statBots">0</div><div class="text-slate-400 text-sm">Всего ботов</div><div class="text-green-400 text-xs mt-1" id="statActiveBots">Активных: 0</div></div>
-          <div class="glass p-4 rounded-xl"><div class="text-3xl font-bold" id="statGroups">0</div><div class="text-slate-400 text-sm">Всего групп</div><div class="text-green-400 text-xs mt-1" id="statActiveGroups">Активных: 0</div></div>
+          <div class="glass p-4 rounded-xl"><div class="text-3xl font-bold" id="statBots">0</div><div class="text-slate-400 text-sm">Ботов</div><div class="text-green-400 text-xs mt-1" id="statActiveBots">Активных: 0</div></div>
+          <div class="glass p-4 rounded-xl"><div class="text-3xl font-bold" id="statGroups">0</div><div class="text-slate-400 text-sm">Групп</div><div class="text-green-400 text-xs mt-1" id="statActiveGroups">Активных: 0</div></div>
           <div class="glass p-4 rounded-xl"><div class="text-3xl font-bold" id="statMessages">0</div><div class="text-slate-400 text-sm">Сообщений</div><div class="text-green-400 text-xs mt-1" id="statSent">Отправлено: 0</div></div>
           <div class="glass p-4 rounded-xl"><div class="text-3xl font-bold" id="statUsers">0</div><div class="text-slate-400 text-sm">Пользователей</div><div class="text-green-400 text-xs mt-1" id="statActiveUsers">Активных: 0</div></div>
         </div>
-        <div class="grid grid-cols-2 gap-4 mb-6">
-          <div class="glass p-4 rounded-xl"><h3 class="font-bold mb-3">📈 Статистика сообщений</h3><div class="space-y-2 text-sm"><div class="flex justify-between"><span>Отправлено</span><span id="msgSent" class="text-green-400">0</span></div><div class="flex justify-between"><span>Получено</span><span id="msgReceived" class="text-blue-400">0</span></div><div class="flex justify-between"><span>Ошибки</span><span id="msgFailed" class="text-red-400">0</span></div></div></div>
-          <div class="glass p-4 rounded-xl"><h3 class="font-bold mb-3">📅 Расписание</h3><div class="space-y-2 text-sm"><div class="flex justify-between"><span>Всего расписаний</span><span id="schedTotal">0</span></div><div class="flex justify-between"><span>Активных</span><span id="schedActive" class="text-green-400">0</span></div></div></div>
-        </div>
-        <div class="glass p-4 rounded-xl"><h3 class="font-bold mb-3">📢 Последние события</h3><div id="eventsList" class="space-y-2 text-sm text-slate-400"></div></div>
+        <div class="grid grid-cols-2 gap-4"><div class="glass p-4 rounded-xl"><h3 class="font-bold mb-3">📈 Сообщения</h3><div class="space-y-2 text-sm"><div class="flex justify-between"><span>Отправлено</span><span id="msgSent" class="text-green-400">0</span></div><div class="flex justify-between"><span>Получено</span><span id="msgReceived" class="text-blue-400">0</span></div><div class="flex justify-between"><span>Ошибки</span><span id="msgFailed" class="text-red-400">0</span></div></div></div><div class="glass p-4 rounded-xl"><h3 class="font-bold mb-3">📅 Расписание</h3><div class="space-y-2 text-sm"><div class="flex justify-between"><span>Всего</span><span id="schedTotal">0</span></div><div class="flex justify-between"><span>Активных</span><span id="schedActive" class="text-green-400">0</span></div></div></div></div>
       </div>
 
+      <!-- Bots -->
       <div id="bots" class="section hidden">
-        <div class="flex justify-between items-center mb-6">
-          <h2 class="text-2xl font-bold">🤖 Боты</h2>
-          <div class="flex gap-2">
-            <button onclick="openBotFather()" class="btn-secondary btn-green">🤖 Создать через BotFather</button>
-            <button onclick="openAddBotModal()" class="btn-primary">➕ Добавить бота</button>
-          </div>
-        </div>
+        <div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold">🤖 Боты</h2><div class="flex gap-2"><button onclick="openBotFather()" class="btn-secondary btn-green">🤖 BotFather</button><button onclick="openAddBotModal()" class="btn-primary">➕ Добавить</button></div></div>
         <div id="botsList" class="grid grid-cols-2 gap-4"></div>
       </div>
 
+      <!-- Groups -->
       <div id="groups" class="section hidden">
-        <div class="flex justify-between items-center mb-6">
-          <h2 class="text-2xl font-bold">👥 Группы</h2>
-          <button onclick="openAddGroupModal()" class="btn-primary">➕ Добавить группу</button>
-        </div>
+        <div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold">👥 Группы</h2><button onclick="openAddGroupModal()" class="btn-primary">➕ Добавить</button></div>
         <div id="groupsList" class="grid grid-cols-2 gap-4"></div>
       </div>
 
+      <!-- Chat -->
       <div id="chat" class="section hidden">
         <h2 class="text-2xl font-bold mb-6">💬 Чат</h2>
-        <div class="flex gap-4 h-[calc(100vh-150px)]">
-          <div class="w-64 glass rounded-xl p-4 overflow-auto"><h3 class="font-bold mb-3">Группы</h3><div id="chatGroupsList"></div></div>
-          <div class="flex-1 glass rounded-xl flex flex-col">
-            <div id="chatHeader" class="p-4 border-b border-white/10 font-bold"></div>
-            <div id="chatMessages" class="flex-1 p-4 overflow-auto space-y-2"></div>
-            <div class="p-4 border-t border-white/10 flex gap-2">
-              <input type="text" id="chatInput" class="input-field flex-1" placeholder="Введите сообщение...">
-              <button onclick="sendMessage()" class="btn-primary">Отправить</button>
-            </div>
-          </div>
-        </div>
+        <div class="flex gap-4 h-[calc(100vh-150px)]"><div class="w-64 glass rounded-xl p-4 overflow-auto"><h3 class="font-bold mb-3">Группы</h3><div id="chatGroupsList"></div></div><div class="flex-1 glass rounded-xl flex flex-col"><div id="chatHeader" class="p-4 border-b border-white/10 font-bold"></div><div id="chatMessages" class="flex-1 p-4 overflow-auto space-y-2"></div><div class="p-4 border-t border-white/10 flex gap-2"><input type="text" id="chatInput" class="input-field flex-1" placeholder="Сообщение..."><button onclick="sendMessage()" class="btn-primary">Отправить</button></div></div></div>
       </div>
 
+      <!-- Schedule -->
       <div id="schedule" class="section hidden">
-        <div class="flex justify-between items-center mb-6">
-          <h2 class="text-2xl font-bold">📅 Расписание</h2>
-          <button onclick="openAddScheduleModal()" class="btn-primary">➕ Создать расписание</button>
-        </div>
+        <div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold">📅 Расписание</h2><button onclick="openAddScheduleModal()" class="btn-primary">➕ Создать</button></div>
         <div id="schedulesList" class="space-y-4"></div>
       </div>
 
-      <div id="users" class="section hidden admin-only">
-        <div class="flex justify-between items-center mb-6">
-          <h2 class="text-2xl font-bold">👤 Пользователи</h2>
-          <button onclick="openAddUserModal()" class="btn-primary">➕ Добавить пользователя</button>
-        </div>
+      <!-- Users -->
+      <div id="users" class="section hidden">
+        <div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold">👤 Пользователи</h2><button id="addUserBtn" onclick="openAddUserModal()" class="btn-primary hidden">➕ Добавить</button></div>
         <div id="usersList" class="grid grid-cols-2 gap-4"></div>
       </div>
 
+      <!-- Notifications -->
       <div id="notifications" class="section hidden">
-        <div class="flex justify-between items-center mb-6">
-          <h2 class="text-2xl font-bold">🔔 Уведомления</h2>
-          <button onclick="openSupportModal()" class="btn-primary">📨 Написать техподдержку</button>
-        </div>
+        <div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold">🔔 Уведомления</h2><button onclick="openSupportModal()" class="btn-primary">📨 Написать</button></div>
         <div id="notificationsList" class="space-y-4"></div>
       </div>
 
+      <!-- Activity -->
       <div id="activity" class="section hidden">
         <h2 class="text-2xl font-bold mb-6">📝 История действий</h2>
         <div id="activityList" class="space-y-2"></div>
       </div>
 
+      <!-- AI Monitor -->
+      <div id="ai_monitor" class="section hidden">
+        <h2 class="text-2xl font-bold mb-6">🛡️ AI Мониторинг</h2>
+        <div class="glass p-4 rounded-xl mb-4"><h3 class="font-bold mb-3 text-red-400">⚠️ Подозрительные действия</h3><div id="aiAlerts" class="space-y-2"></div></div>
+        <div class="glass p-4 rounded-xl"><h3 class="font-bold mb-3">📊 Все логи</h3><div id="aiLogs" class="space-y-2 max-h-96 overflow-auto"></div></div>
+      </div>
+
+      <!-- Settings -->
       <div id="settings" class="section hidden">
         <h2 class="text-2xl font-bold mb-6">⚙️ Настройки</h2>
         <div class="glass p-6 rounded-xl space-y-4 max-w-lg">
-          <div class="flex justify-between items-center">
-            <div><div class="font-bold">Экспорт данных</div><div class="text-sm text-slate-400">Выгрузить все данные</div></div>
-            <button onclick="exportData()" class="btn-secondary">Экспорт</button>
-          </div>
-          <div class="flex justify-between items-center">
-            <div><div class="font-bold">Импорт данных</div><div class="text-sm text-slate-400">Загрузить из JSON</div></div>
-            <button onclick="document.getElementById('importFile').click()" class="btn-secondary">Импорт</button>
-            <input type="file" id="importFile" class="hidden" accept=".json" onchange="importData(this)">
-          </div>
-          <div class="pt-4 border-t border-white/10">
-            <div class="font-bold mb-2">🔐 Сменить пароль</div>
-            <div class="space-y-2"><input type="password" id="newPassword" class="input-field w-full" placeholder="Новый пароль"><button onclick="changePassword()" class="btn-primary w-full">Сохранить</button></div>
-          </div>
-          <div class="pt-4 border-t border-white/10">
-            <div class="font-bold mb-2">ℹ️ О программе</div>
-            <div id="aboutInfo" class="text-sm text-slate-400"></div>
-          </div>
+          <div class="flex justify-between items-center"><div><div class="font-bold">Экспорт</div><div class="text-sm text-slate-400">Выгрузить данные</div></div><button onclick="exportData()" class="btn-secondary">Экспорт</button></div>
+          <div class="flex justify-between items-center"><div><div class="font-bold">Импорт</div><div class="text-sm text-slate-400">Загрузить данные</div></div><button onclick="document.getElementById('importFile').click()" class="btn-secondary">Импорт</button><input type="file" id="importFile" class="hidden" accept=".json" onchange="importData(this)"></div>
+          <div class="pt-4 border-t border-white/10"><div class="font-bold mb-2">🔐 Сменить пароль</div><div class="space-y-2"><input type="password" id="newPassword" class="input-field w-full" placeholder="Новый пароль"><button onclick="changePassword()" class="btn-primary w-full">Сохранить</button></div></div>
+          <div class="pt-4 border-t border-white/10"><div class="font-bold mb-2">ℹ️ О программе</div><div id="aboutInfo" class="text-sm text-slate-400"></div></div>
         </div>
       </div>
     </div>
@@ -185,8 +149,22 @@
 
   <script>
     let currentUser = null;
-    let bots = [], groups = [], messages = [], schedules = [], users = [], notifications = [], activityLog = [];
+    let permissions = null;
+    let bots = [], groups = [], messages = [], schedules = [], users = [], notifications = [], aiLogs = [], aiAlerts = [];
     let currentChatGroup = null;
+
+    const TABS_CONFIG = {
+      dashboard: { name: '📊 Дашборд', roles: ['admin'] },
+      bots: { name: '🤖 Боты', roles: ['admin'] },
+      groups: { name: '👥 Группы', roles: ['admin'] },
+      chat: { name: '💬 Чат', roles: ['admin', 'user'] },
+      schedule: { name: '📅 Расписание', roles: ['admin'] },
+      users: { name: '👤 Пользователи', roles: ['admin', 'helper'] },
+      notifications: { name: '🔔 Уведомления', roles: ['admin', 'user', 'helper'] },
+      activity: { name: '📝 История', roles: ['admin'] },
+      ai_monitor: { name: '🛡️ AI Мониторинг', roles: ['admin'] },
+      settings: { name: '⚙️ Настройки', roles: ['admin', 'user', 'helper'] }
+    };
 
     async function login() {
       const login = document.getElementById('loginUsername').value.trim();
@@ -195,27 +173,47 @@
       const result = await window.electronAPI.login({ login, password });
       if (result.success) {
         currentUser = result.user;
+        permissions = result.user.permissions;
         document.getElementById('loginScreen').classList.add('hidden');
         document.getElementById('mainApp').classList.remove('hidden');
-        document.getElementById('userInfo').textContent = `${currentUser.login} (${currentUser.role})`;
-        applyRolePermissions();
+        document.getElementById('userInfo').textContent = `${currentUser.login} (${currentUser.role === 'admin' ? 'Админ' : currentUser.role === 'helper' ? 'Помощник' : 'Пользователь'})`;
+        applyTabsByRole();
         await loadData();
         checkNotifications();
+        if (currentUser.role === 'admin') loadAIMonitoring();
       } else {
         showToast('❌ ' + result.error, 'error');
       }
     }
 
-    function applyRolePermissions() {
-      const isAdmin = currentUser.role === 'admin';
-      const isHelper = currentUser.role === 'helper';
-      document.querySelectorAll('.admin-only').forEach(el => {
-        el.style.display = (isAdmin || isHelper) ? 'block' : 'none';
-      });
+    function applyTabsByRole() {
+      const nav = document.getElementById('mainNav');
+      nav.innerHTML = '';
+      for (const [id, config] of Object.entries(TABS_CONFIG)) {
+        if (config.roles.includes(currentUser.role)) {
+          const div = document.createElement('div');
+          div.className = 'nav-item';
+          div.textContent = config.name;
+          div.onclick = () => showSection(id);
+          div.dataset.tab = id;
+          nav.appendChild(div);
+        }
+      }
+      // Показываем первую вкладку
+      const firstTab = nav.querySelector('.nav-item');
+      if (firstTab) {
+        firstTab.classList.add('active');
+        showSection(firstTab.dataset.tab);
+      }
+      // Кнопка добавления пользователя только для админа
+      if (currentUser.role === 'admin') {
+        document.getElementById('addUserBtn').classList.remove('hidden');
+      }
     }
 
     function logout() {
       currentUser = null;
+      permissions = null;
       document.getElementById('loginScreen').classList.remove('hidden');
       document.getElementById('mainApp').classList.add('hidden');
     }
@@ -225,7 +223,6 @@
       groups = await window.electronAPI.getGroups();
       schedules = await window.electronAPI.getSchedules();
       users = await window.electronAPI.getUsers();
-      activityLog = await window.electronAPI.getActivityLog();
       const stats = await window.electronAPI.getStats();
       document.getElementById('statBots').textContent = stats.botCount;
       document.getElementById('statActiveBots').textContent = 'Активных: ' + stats.activeBots;
@@ -243,6 +240,28 @@
       renderBots(); renderGroups(); renderSchedules(); renderUsers(); renderChatList(); renderActivity(); loadAbout();
     }
 
+    async function loadAIMonitoring() {
+      aiLogs = await window.electronAPI.getAILogs();
+      aiAlerts = await window.electronAPI.getAIAlerts();
+      renderAIMonitoring();
+    }
+
+    function renderAIMonitoring() {
+      document.getElementById('aiAlerts').innerHTML = aiAlerts.length ? aiAlerts.map(a => `
+        <div class="glass p-3 rounded-lg ${a.risk === 'critical' ? 'alert-critical' : a.risk === 'high' ? 'alert-high' : 'alert-medium'}">
+          <div class="flex justify-between"><span class="font-bold text-sm">${a.ai_warning || a.action}</span><span class="text-xs ${a.risk === 'critical' ? 'text-red-400' : 'text-orange-400'}">${a.risk}</span></div>
+          <div class="text-xs text-slate-400 mt-1">${new Date(a.timestamp).toLocaleString()}</div>
+        </div>
+      `).join('') : '<div class="text-slate-400">Нет предупреждений</div>';
+      
+      document.getElementById('aiLogs').innerHTML = aiLogs.length ? aiLogs.map(a => `
+        <div class="glass p-2 rounded-lg flex justify-between items-center text-sm">
+          <div><span class="${a.risk === 'critical' ? 'text-red-400' : a.risk === 'high' ? 'text-orange-400' : 'text-slate-400'}">${a.action}</span><span class="text-slate-500 ml-2">${a.details || ''}</span></div>
+          <span class="text-xs text-slate-500">${new Date(a.timestamp).toLocaleString()}</span>
+        </div>
+      `).join('') : '<div class="text-slate-400">Нет логов</div>';
+    }
+
     async function checkNotifications() {
       if (!currentUser) return;
       const unread = await window.electronAPI.getUnreadCount(currentUser.id);
@@ -256,77 +275,61 @@
       document.querySelectorAll('.section').forEach(s => s.classList.add('hidden'));
       document.getElementById(id).classList.remove('hidden');
       document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-      event.target.classList.add('active');
+      document.querySelector(`.nav-item[data-tab="${id}"]`)?.classList.add('active');
       if (id === 'notifications') loadNotifications();
-    }
-
-    function renderActivity() {
-      document.getElementById('activityList').innerHTML = activityLog.length ? activityLog.map(a => `
-        <div class="glass p-3 rounded-lg flex justify-between items-center">
-          <div>
-            <div class="font-bold text-sm">${escapeHtml(a.login || 'Система')}</div>
-            <div class="text-xs text-slate-400">${a.action} ${a.details || ''}</div>
-          </div>
-          <div class="text-xs text-slate-500">${new Date(a.created_at).toLocaleString()}</div>
-        </div>
-      `).join('') : '<div class="text-slate-400">Нет записей</div>';
+      if (id === 'ai_monitor' && currentUser.role === 'admin') loadAIMonitoring();
     }
 
     function renderBots() {
+      if (currentUser.role !== 'admin') return;
       document.getElementById('botsList').innerHTML = bots.map(b => `
         <div class="glass p-4 rounded-xl">
-          <div class="flex justify-between items-start mb-2">
-            <div class="font-bold">${escapeHtml(b.name)}</div>
-            <span class="badge ${b.status === 'active' ? 'badge-active' : 'badge-inactive'}">${b.status === 'active' ? '🟢 Активен' : '🔴 Неактивен'}</span>
-          </div>
-          <div class="text-sm text-slate-400 mb-3">${escapeHtml(b.token.substring(0, 20))}...</div>
-          <div class="flex gap-2 flex-wrap">
-            <button onclick="toggleBotStatus(${b.id}, '${b.status === 'active' ? 'inactive' : 'active'}')" class="btn-secondary text-xs py-1 px-2">${b.status === 'active' ? '⏸️ Деактивировать' : '▶️ Активировать'}</button>
-            ${currentUser.role === 'admin' ? `<button onclick="editBot(${b.id})" class="btn-secondary text-xs py-1 px-2">✏️</button><button onclick="deleteBot(${b.id})" class="btn-secondary text-xs py-1 px-2">🗑️</button>` : ''}
-          </div>
+          <div class="flex justify-between items-start mb-2"><div class="font-bold">${escapeHtml(b.name)}</div><span class="badge ${b.status === 'active' ? 'badge-active' : 'badge-inactive'}">${b.status === 'active' ? '🟢' : '🔴'}</span></div>
+          <div class="text-sm text-slate-400 mb-3">${b.token}</div>
+          <div class="flex gap-2 flex-wrap"><button onclick="toggleBotStatus(${b.id}, '${b.status === 'active' ? 'inactive' : 'active'}')" class="btn-secondary text-xs py-1 px-2">${b.status === 'active' ? '⏸️' : '▶️'}</button><button onclick="editBot(${b.id})" class="btn-secondary text-xs py-1 px-2">✏️</button><button onclick="deleteBot(${b.id})" class="btn-secondary text-xs py-1 px-2">🗑️</button></div>
         </div>
       `).join('') || '<div class="text-slate-400">Нет ботов</div>';
     }
 
     function renderGroups() {
+      if (currentUser.role !== 'admin') return;
       document.getElementById('groupsList').innerHTML = groups.map(g => `
         <div class="glass p-4 rounded-xl">
-          <div class="flex justify-between items-start mb-2">
-            <div class="font-bold">${escapeHtml(g.name)}</div>
-            <span class="badge ${g.status === 'active' ? 'badge-active' : 'badge-inactive'}">${g.status === 'active' ? '🟢 Активна' : '🔴 Неактивна'}</span>
-          </div>
+          <div class="flex justify-between items-start mb-2"><div class="font-bold">${escapeHtml(g.name)}</div><span class="badge ${g.status === 'active' ? 'badge-active' : 'badge-inactive'}">${g.status === 'active' ? '🟢' : '🔴'}</span></div>
           <div class="text-sm text-slate-400">Chat ID: ${g.chat_id}</div>
-          <div class="text-sm text-slate-400">Бот: ${escapeHtml(g.bot_name || '-')}</div>
-          <div class="text-sm text-slate-400">Темы: ${g.topic_ids || '-'}</div>
-          <div class="flex gap-2 mt-2 flex-wrap">
-            <button onclick="toggleGroupStatus(${g.id}, '${g.status === 'active' ? 'inactive' : 'active'}')" class="btn-secondary text-xs py-1 px-2">${g.status === 'active' ? '⏸️ Деактивировать' : '▶️ Активировать'}</button>
-            ${currentUser.role === 'admin' ? `<button onclick="editGroup(${g.id})" class="btn-secondary text-xs py-1 px-2">✏️</button><button onclick="deleteGroup(${g.id})" class="btn-secondary text-xs py-1 px-2">🗑️</button>` : ''}
-          </div>
+          <div class="flex gap-2 mt-2 flex-wrap"><button onclick="toggleGroupStatus(${g.id}, '${g.status === 'active' ? 'inactive' : 'active'}')" class="btn-secondary text-xs py-1 px-2">${g.status === 'active' ? '⏸️' : '▶️'}</button><button onclick="editGroup(${g.id})" class="btn-secondary text-xs py-1 px-2">✏️</button><button onclick="deleteGroup(${g.id})" class="btn-secondary text-xs py-1 px-2">🗑️</button></div>
         </div>
       `).join('') || '<div class="text-slate-400">Нет групп</div>';
     }
 
     function renderUsers() {
-      if (currentUser.role !== 'admin' && currentUser.role !== 'helper') return;
-      document.getElementById('usersList').innerHTML = users.map(u => `
+      const isAdmin = currentUser.role === 'admin';
+      const isHelper = currentUser.role === 'helper';
+      if (!isAdmin && !isHelper) return;
+      
+      document.getElementById('usersList').innerHTML = users.map(u => {
+        const isSelf = u.id === currentUser.id;
+        const isAdminUser = u.role === 'admin';
+        return `
         <div class="glass p-4 rounded-xl">
           <div class="flex justify-between items-start mb-2">
             <div class="font-bold">${escapeHtml(u.login)}</div>
-            <span class="badge ${u.role === 'admin' ? 'badge-admin' : u.role === 'helper' ? 'badge-helper' : 'badge-user'}">${u.role === 'admin' ? '👑 Админ' : u.role === 'helper' ? '🔧 Помощник' : '👤 Пользователь'}</span>
+            <span class="badge ${u.role === 'admin' ? 'badge-admin' : u.role === 'helper' ? 'badge-helper' : 'badge-user'}">${u.role === 'admin' ? '👑' : u.role === 'helper' ? '🔧' : '👤'}</span>
           </div>
           <div class="text-sm text-slate-400 mb-2">Статус: <span class="${u.status === 'active' ? 'text-green-400' : 'text-red-400'}">${u.status === 'active' ? 'Активен' : 'Заблокирован'}</span></div>
           <div class="flex gap-2 flex-wrap">
-            <button onclick="toggleUserStatus(${u.id}, '${u.status === 'active' ? 'inactive' : 'active'}')" class="btn-secondary text-xs py-1 px-2">${u.status === 'active' ? '🔴 Заблокировать' : '🟢 Разблокировать'}</button>
-            ${u.id !== currentUser.id ? `<button onclick="editUser(${u.id})" class="btn-secondary text-xs py-1 px-2">✏️ Пароль</button>${currentUser.role === 'admin' ? `<button onclick="deleteUser(${u.id})" class="btn-secondary text-xs py-1 px-2">🗑️</button>` : ''}` : ''}
+            ${!isAdminUser ? `<button onclick="toggleUserStatus(${u.id}, '${u.status === 'active' ? 'inactive' : 'active'}')" class="btn-secondary text-xs py-1 px-2">${u.status === 'active' ? '🔴' : '🟢'}</button>` : ''}
+            ${!isSelf && !isAdminUser ? `<button onclick="editUser(${u.id})" class="btn-secondary text-xs py-1 px-2">🔐</button>` : ''}
+            ${isAdmin && !isSelf && !isAdminUser ? `<button onclick="deleteUser(${u.id})" class="btn-secondary text-xs py-1 px-2">🗑️</button>` : ''}
           </div>
         </div>
-      `).join('') || '<div class="text-slate-400">Нет пользователей</div>';
+        `;
+      }).join('') || '<div class="text-slate-400">Нет пользователей</div>';
     }
 
     function editUser(id) {
-      const u = users.find(user => user.id === id);
-      document.getElementById('modalTitle').textContent = '🔐 Сменить пароль пользователю';
-      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Новый пароль</label><input type="password" id="userNewPassword" class="input-field w-full" placeholder="Новый пароль"></div></div>`;
+      document.getElementById('modalTitle').textContent = '🔐 Сменить пароль';
+      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Новый пароль</label><input type="password" id="userNewPassword" class="input-field w-full"></div></div>`;
       document.getElementById('modalSaveBtn').onclick = () => saveUserPassword(id);
       openModal();
     }
@@ -339,31 +342,22 @@
       else showToast('❌ ' + result.error, 'error');
     }
 
-    async function loadNotifications() {
-      if (!currentUser) return;
-      notifications = await window.electronAPI.getNotifications(currentUser.id);
-      document.getElementById('notificationsList').innerHTML = notifications.length ? notifications.map(n => `
-        <div class="glass p-4 rounded-xl ${n.read ? 'opacity-60' : ''}">
-          <div class="flex justify-between items-start">
-            <div class="font-bold">${n.type === 'support' ? '📨 Техподдержка' : '📢 Уведомление'}</div>
-            <span class="text-xs text-slate-400">${new Date(n.created_at).toLocaleString()}</span>
-          </div>
-          <div class="text-sm mt-2">${escapeHtml(n.text)}</div>
-          ${!n.read ? `<button onclick="markNotificationRead(${n.id})" class="btn-secondary text-xs mt-2">Отметить прочитанным</button>` : ''}
-        </div>
-      `).join('') : '<div class="text-slate-400">Нет уведомлений</div>';
+    async function toggleUserStatus(id, status) {
+      const result = await window.electronAPI.toggleUserStatus({ id, status, currentUserRole: currentUser.role });
+      if (result.success) { showToast(status === 'active' ? '✅ Разблокирован' : '🔴 Заблокирован'); await loadData(); }
+      else showToast('❌ ' + result.error, 'error');
     }
 
-    async function markNotificationRead(id) {
-      await window.electronAPI.markNotificationRead(id);
-      loadNotifications();
-      checkNotifications();
+    async function deleteUser(id) {
+      if (!confirm('Удалить пользователя?')) return;
+      const result = await window.electronAPI.deleteUser({ id, currentUserRole: currentUser.role });
+      if (result.success) { showToast('✅ Удалён'); await loadData(); }
+      else showToast('❌ ' + result.error, 'error');
     }
 
+    // Остальные функции рендеринга и модальные окна...
     function renderChatList() {
-      document.getElementById('chatGroupsList').innerHTML = groups.filter(g => g.status === 'active').map(g => `
-        <div class="nav-item ${currentChatGroup?.id === g.id ? 'active' : ''}" onclick="selectChatGroup(${g.id})">${escapeHtml(g.name)}</div>
-      `).join('') || '<div class="text-slate-400 text-sm">Нет групп</div>';
+      document.getElementById('chatGroupsList').innerHTML = groups.filter(g => g.status === 'active').map(g => `<div class="nav-item ${currentChatGroup?.id === g.id ? 'active' : ''}" onclick="selectChatGroup(${g.id})">${escapeHtml(g.name)}</div>`).join('') || '<div class="text-slate-400 text-sm">Нет групп</div>';
     }
 
     async function selectChatGroup(id) {
@@ -375,12 +369,7 @@
     }
 
     function renderChatMessages() {
-      document.getElementById('chatMessages').innerHTML = messages.map(m => `
-        <div class="${m.sent ? 'message-sent' : 'message-received'}">
-          <div class="text-xs text-slate-400 mb-1">${m.sender || ''} • ${new Date(m.time).toLocaleTimeString()} • <span class="${m.status === 'sent' ? 'text-green-400' : m.status === 'failed' ? 'text-red-400' : 'text-blue-400'}">${m.status === 'sent' ? '✓' : m.status === 'failed' ? '✗' : '↓'}</span></div>
-          <div>${escapeHtml(m.text)}</div>
-        </div>
-      `).join('');
+      document.getElementById('chatMessages').innerHTML = messages.map(m => `<div class="${m.sent ? 'message-sent' : 'message-received'}"><div class="text-xs text-slate-400 mb-1">${m.sender || ''} • ${new Date(m.time).toLocaleTimeString()} • <span class="${m.status === 'sent' ? 'text-green-400' : m.status === 'failed' ? 'text-red-400' : 'text-blue-400'}">${m.status === 'sent' ? '✓' : m.status === 'failed' ? '✗' : '↓'}</span></div><div>${escapeHtml(m.text)}</div></div>`).join('');
       document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
     }
 
@@ -390,8 +379,7 @@
       if (!text) return;
       const bot = bots.find(b => b.id === currentChatGroup.bot_id);
       if (!bot) return showToast('Бот не найден', 'error');
-      const topicIds = currentChatGroup.topic_ids ? currentChatGroup.topic_ids.split(',').map(t => t.trim()) : null;
-      const result = await window.electronAPI.sendTelegramMessage({ token: bot.token, chatId: currentChatGroup.chat_id, text, topicIds });
+      const result = await window.electronAPI.sendTelegramMessage({ token: bot.token, chatId: currentChatGroup.chat_id, text, topicIds: currentChatGroup.topic_ids ? currentChatGroup.topic_ids.split(',').map(t => t.trim()) : null });
       if (result.ok) {
         await window.electronAPI.addMessage({ groupId: currentChatGroup.id, text, sent: 1, sender: currentUser.login, status: 'sent' });
         showToast('✅ Отправлено');
@@ -399,73 +387,77 @@
         await selectChatGroup(currentChatGroup.id);
         await loadData();
       } else {
-        await window.electronAPI.addMessage({ groupId: currentChatGroup.id, text, sent: 0, sender: currentUser.login, status: 'failed' });
         showToast('❌ ' + (result.description || 'Ошибка'), 'error');
-        await selectChatGroup(currentChatGroup.id);
       }
     }
 
     function renderSchedules() {
-      document.getElementById('schedulesList').innerHTML = schedules.map(s => `
-        <div class="glass p-4 rounded-xl flex justify-between items-center">
-          <div>
-            <div class="font-bold">${escapeHtml(s.name)}</div>
-            <div class="text-sm text-slate-400">${escapeHtml(s.text)}</div>
-            <div class="text-sm text-slate-400">${s.group_name} • ${s.scheduled_time} (${s.repeat_type}) • <span class="${s.status === 'active' ? 'text-green-400' : 'text-red-400'}">${s.status}</span></div>
-          </div>
-          <div class="flex gap-2">
-            <button onclick="toggleSchedule(${s.id}, '${s.status === 'active' ? 'inactive' : 'active'}')" class="btn-secondary text-sm py-1 px-3">${s.status === 'active' ? '⏸️' : '▶️'}</button>
-            ${currentUser.role === 'admin' ? `<button onclick="deleteSchedule(${s.id})" class="btn-secondary text-sm py-1 px-3">🗑️</button>` : ''}
-          </div>
-        </div>
-      `).join('') || '<div class="text-slate-400">Нет расписаний</div>';
+      if (currentUser.role !== 'admin') return;
+      document.getElementById('schedulesList').innerHTML = schedules.map(s => `<div class="glass p-4 rounded-xl flex justify-between items-center"><div><div class="font-bold">${escapeHtml(s.name)}</div><div class="text-sm text-slate-400">${s.group_name} • ${s.scheduled_time}</div></div><div class="flex gap-2"><button onclick="toggleSchedule(${s.id}, '${s.status === 'active' ? 'inactive' : 'active'}')" class="btn-secondary text-sm py-1 px-3">${s.status === 'active' ? '⏸️' : '▶️'}</button><button onclick="deleteSchedule(${s.id})" class="btn-secondary text-sm py-1 px-3">🗑️</button></div></div>`).join('') || '<div class="text-slate-400">Нет расписаний</div>';
     }
 
+    function renderActivity() {
+      if (currentUser.role !== 'admin') return;
+      window.electronAPI.getActivityLog().then(logs => {
+        document.getElementById('activityList').innerHTML = logs.length ? logs.map(a => `<div class="glass p-3 rounded-lg flex justify-between"><div><div class="font-bold text-sm">${escapeHtml(a.login || 'Система')}</div><div class="text-xs text-slate-400">${a.action}</div></div><div class="text-xs text-slate-500">${new Date(a.created_at).toLocaleString()}</div></div>`).join('') : '<div class="text-slate-400">Нет записей</div>';
+      });
+    }
+
+    async function loadNotifications() {
+      if (!currentUser) return;
+      notifications = await window.electronAPI.getNotifications(currentUser.id);
+      document.getElementById('notificationsList').innerHTML = notifications.length ? notifications.map(n => `<div class="glass p-4 rounded-xl ${n.read ? 'opacity-60' : ''}"><div class="flex justify-between"><div class="font-bold">${n.type === 'support' ? '📨' : '📢'}</div><span class="text-xs text-slate-400">${new Date(n.created_at).toLocaleString()}</span></div><div class="text-sm mt-2">${escapeHtml(n.text)}</div>${!n.read ? `<button onclick="markNotificationRead(${n.id})" class="btn-secondary text-xs mt-2">Прочитано</button>` : ''}</div>`).join('') : '<div class="text-slate-400">Нет уведомлений</div>';
+    }
+
+    async function markNotificationRead(id) {
+      await window.electronAPI.markNotificationRead(id);
+      loadNotifications();
+      checkNotifications();
+    }
+
+    // Modal functions
     function openBotFather() { window.open('https://t.me/BotFather', '_blank'); showToast('Откройте @BotFather'); }
     function openAddBotModal() {
       document.getElementById('modalTitle').textContent = '🤖 Добавить бота';
-      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Имя</label><input type="text" id="botName" class="input-field w-full" placeholder="Мой бот"></div><div><label class="block text-sm text-slate-400 mb-2">Токен</label><input type="text" id="botToken" class="input-field w-full" placeholder="123456789:ABC..."></div></div>`;
+      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Имя</label><input type="text" id="botName" class="input-field w-full"></div><div><label class="block text-sm text-slate-400 mb-2">Токен</label><input type="text" id="botToken" class="input-field w-full"></div></div>`;
       document.getElementById('modalSaveBtn').onclick = saveBot;
       openModal();
     }
     async function saveBot() {
       const name = document.getElementById('botName').value.trim();
       const token = document.getElementById('botToken').value.trim();
-      if (!name || !token) return showToast('Заполните все поля', 'error');
+      if (!name || !token) return showToast('Заполните поля', 'error');
       const result = await window.electronAPI.addBot({ name, token });
       if (result.success) { showToast('✅ Бот добавлен!'); closeModal(); await loadData(); }
       else showToast('❌ ' + result.error, 'error');
     }
     async function toggleBotStatus(id, status) {
       await window.electronAPI.toggleBotStatus({ id, status });
-      showToast(status === 'active' ? '✅ Бот активирован' : '⏸️ Бот деактивирован');
       await loadData();
     }
     async function deleteBot(id) {
       if (!confirm('Удалить бота?')) return;
       await window.electronAPI.deleteBot(id);
-      showToast('✅ Бот удалён');
+      showToast('✅ Удалён');
       await loadData();
     }
     function editBot(id) {
       const bot = bots.find(b => b.id === id);
-      document.getElementById('modalTitle').textContent = '✏️ Редактировать бота';
-      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Имя</label><input type="text" id="botName" class="input-field w-full" value="${escapeHtml(bot.name)}"></div><div><label class="block text-sm text-slate-400 mb-2">Токен</label><input type="text" id="botToken" class="input-field w-full" value="${escapeHtml(bot.token)}"></div></div>`;
+      document.getElementById('modalTitle').textContent = '✏️ Редактировать';
+      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Имя</label><input type="text" id="botName" class="input-field w-full" value="${escapeHtml(bot.name)}"></div></div>`;
       document.getElementById('modalSaveBtn').onclick = () => saveEditBot(id);
       openModal();
     }
     async function saveEditBot(id) {
       const name = document.getElementById('botName').value.trim();
-      const token = document.getElementById('botToken').value.trim();
-      const result = await window.electronAPI.updateBot({ id, name, token, status: bots.find(b => b.id === id).status });
-      if (result.success) { showToast('✅ Бот обновлён!'); closeModal(); await loadData(); }
-      else showToast('❌ ' + result.error, 'error');
+      await window.electronAPI.updateBot({ id, name, status: bots.find(b => b.id === id).status });
+      showToast('✅ Обновлено!'); closeModal(); await loadData();
     }
 
     function openAddGroupModal() {
       if (bots.length === 0) return showToast('Сначала добавьте бота', 'error');
       document.getElementById('modalTitle').textContent = '👥 Добавить группу';
-      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Название</label><input type="text" id="groupName" class="input-field w-full" placeholder="Моя группа"></div><div><label class="block text-sm text-slate-400 mb-2">Chat ID</label><input type="text" id="groupChatId" class="input-field w-full" placeholder="-123456789"></div><div><label class="block text-sm text-slate-400 mb-2">Бот</label><select id="groupBotId" class="input-field w-full">${bots.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}</select></div><div><label class="block text-sm text-slate-400 mb-2">ID тем (через запятую)</label><input type="text" id="groupTopicIds" class="input-field w-full" placeholder="1,2,3"></div></div>`;
+      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Название</label><input type="text" id="groupName" class="input-field w-full"></div><div><label class="block text-sm text-slate-400 mb-2">Chat ID</label><input type="text" id="groupChatId" class="input-field w-full"></div><div><label class="block text-sm text-slate-400 mb-2">Бот</label><select id="groupBotId" class="input-field w-full">${bots.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}</select></div><div><label class="block text-sm text-slate-400 mb-2">ID тем</label><input type="text" id="groupTopicIds" class="input-field w-full"></div></div>`;
       document.getElementById('modalSaveBtn').onclick = saveGroup;
       openModal();
     }
@@ -474,43 +466,39 @@
       const chatId = document.getElementById('groupChatId').value.trim();
       const botId = parseInt(document.getElementById('groupBotId').value);
       const topicIds = document.getElementById('groupTopicIds').value.trim();
-      if (!name || !chatId) return showToast('Заполните все поля', 'error');
+      if (!name || !chatId) return showToast('Заполните поля', 'error');
       const result = await window.electronAPI.addGroup({ name, chatId, botId, topicIds: topicIds || null });
       if (result.success) { showToast('✅ Группа добавлена!'); closeModal(); await loadData(); }
       else showToast('❌ ' + result.error, 'error');
     }
     async function toggleGroupStatus(id, status) {
       await window.electronAPI.toggleGroupStatus({ id, status });
-      showToast(status === 'active' ? '✅ Группа активирована' : '⏸️ Группа деактивирована');
       await loadData();
     }
     async function deleteGroup(id) {
       if (!confirm('Удалить группу?')) return;
       await window.electronAPI.deleteGroup(id);
-      showToast('✅ Группа удалена');
+      showToast('✅ Удалена');
       await loadData();
     }
     function editGroup(id) {
       const g = groups.find(gr => gr.id === id);
-      document.getElementById('modalTitle').textContent = '✏️ Редактировать группу';
-      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Название</label><input type="text" id="groupName" class="input-field w-full" value="${escapeHtml(g.name)}"></div><div><label class="block text-sm text-slate-400 mb-2">Chat ID</label><input type="text" id="groupChatId" class="input-field w-full" value="${g.chat_id}"></div><div><label class="block text-sm text-slate-400 mb-2">Бот</label><select id="groupBotId" class="input-field w-full">${bots.map(b => `<option value="${b.id}" ${b.id === g.bot_id ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('')}</select></div><div><label class="block text-sm text-slate-400 mb-2">ID тем</label><input type="text" id="groupTopicIds" class="input-field w-full" value="${g.topic_ids || ''}"></div></div>`;
+      document.getElementById('modalTitle').textContent = '✏️ Редактировать';
+      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Название</label><input type="text" id="groupName" class="input-field w-full" value="${escapeHtml(g.name)}"></div><div><label class="block text-sm text-slate-400 mb-2">Chat ID</label><input type="text" id="groupChatId" class="input-field w-full" value="${g.chat_id}"></div></div>`;
       document.getElementById('modalSaveBtn').onclick = () => saveEditGroup(id);
       openModal();
     }
     async function saveEditGroup(id) {
       const name = document.getElementById('groupName').value.trim();
       const chatId = document.getElementById('groupChatId').value.trim();
-      const botId = parseInt(document.getElementById('groupBotId').value);
-      const topicIds = document.getElementById('groupTopicIds').value.trim();
-      const result = await window.electronAPI.updateGroup({ id, name, chatId, botId, topicIds: topicIds || null, status: groups.find(g => g.id === id).status });
-      if (result.success) { showToast('✅ Группа обновлена!'); closeModal(); await loadData(); }
-      else showToast('❌ ' + result.error, 'error');
+      await window.electronAPI.updateGroup({ id, name, chatId, botId: groups.find(g => g.id === id).bot_id, topicIds: groups.find(g => g.id === id).topic_ids, status: groups.find(g => g.id === id).status });
+      showToast('✅ Обновлено!'); closeModal(); await loadData();
     }
 
     function openAddScheduleModal() {
       if (groups.length === 0 || bots.length === 0) return showToast('Сначала добавьте бота и группу', 'error');
-      document.getElementById('modalTitle').textContent = '📅 Создать расписание';
-      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Название</label><input type="text" id="scheduleName" class="input-field w-full" placeholder="Рассылка"></div><div><label class="block text-sm text-slate-400 mb-2">Текст</label><textarea id="scheduleText" class="input-field w-full h-24" placeholder="Текст сообщения..."></textarea></div><div><label class="block text-sm text-slate-400 mb-2">Группа</label><select id="scheduleGroupId" class="input-field w-full">${groups.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('')}</select></div><div><label class="block text-sm text-slate-400 mb-2">Бот</label><select id="scheduleBotId" class="input-field w-full">${bots.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}</select></div><div><label class="block text-sm text-slate-400 mb-2">Время</label><input type="datetime-local" id="scheduleTime" class="input-field w-full"></div><div><label class="block text-sm text-slate-400 mb-2">Повтор</label><select id="scheduleRepeat" class="input-field w-full"><option value="once">Однократно</option><option value="daily">Ежедневно</option><option value="weekly">Еженедельно</option><option value="monthly">Ежемесячно</option></select></div></div>`;
+      document.getElementById('modalTitle').textContent = '📅 Расписание';
+      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Название</label><input type="text" id="scheduleName" class="input-field w-full"></div><div><label class="block text-sm text-slate-400 mb-2">Текст</label><textarea id="scheduleText" class="input-field w-full h-24"></textarea></div><div><label class="block text-sm text-slate-400 mb-2">Группа</label><select id="scheduleGroupId" class="input-field w-full">${groups.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('')}</select></div><div><label class="block text-sm text-slate-400 mb-2">Бот</label><select id="scheduleBotId" class="input-field w-full">${bots.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}</select></div><div><label class="block text-sm text-slate-400 mb-2">Время</label><input type="datetime-local" id="scheduleTime" class="input-field w-full"></div><div><label class="block text-sm text-slate-400 mb-2">Повтор</label><select id="scheduleRepeat" class="input-field w-full"><option value="once">Однократно</option><option value="daily">Ежедневно</option><option value="weekly">Еженедельно</option></select></div></div>`;
       document.getElementById('modalSaveBtn').onclick = saveSchedule;
       openModal();
     }
@@ -521,9 +509,9 @@
       const botId = parseInt(document.getElementById('scheduleBotId').value);
       const scheduledTime = document.getElementById('scheduleTime').value;
       const repeatType = document.getElementById('scheduleRepeat').value;
-      if (!name || !text || !scheduledTime) return showToast('Заполните все поля', 'error');
+      if (!name || !text || !scheduledTime) return showToast('Заполните поля', 'error');
       const result = await window.electronAPI.addSchedule({ name, text, groupId, botId, scheduledTime, repeatType });
-      if (result.success) { showToast('✅ Расписание создано!'); closeModal(); await loadData(); }
+      if (result.success) { showToast('✅ Создано!'); closeModal(); await loadData(); }
       else showToast('❌ ' + result.error, 'error');
     }
     async function toggleSchedule(id, status) {
@@ -533,13 +521,13 @@
     async function deleteSchedule(id) {
       if (!confirm('Удалить расписание?')) return;
       await window.electronAPI.deleteSchedule(id);
-      showToast('✅ Расписание удалено');
+      showToast('✅ Удалено');
       await loadData();
     }
 
     function openAddUserModal() {
-      if (currentUser.role !== 'admin') return showToast('Только админ', 'error');
-      document.getElementById('modalTitle').textContent = '👤 Добавить пользователя';
+      if (currentUser.role !== 'admin') return;
+      document.getElementById('modalTitle').textContent = '👤 Добавить';
       document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Логин</label><input type="text" id="userLogin" class="input-field w-full"></div><div><label class="block text-sm text-slate-400 mb-2">Пароль</label><input type="password" id="userPassword" class="input-field w-full"></div><div><label class="block text-sm text-slate-400 mb-2">Роль</label><select id="userRole" class="input-field w-full"><option value="user">Пользователь</option><option value="helper">Помощник</option><option value="admin">Админ</option></select></div></div>`;
       document.getElementById('modalSaveBtn').onclick = saveUser;
       openModal();
@@ -548,26 +536,15 @@
       const login = document.getElementById('userLogin').value.trim();
       const password = document.getElementById('userPassword').value;
       const role = document.getElementById('userRole').value;
-      if (!login || !password) return showToast('Заполните все поля', 'error');
-      const result = await window.electronAPI.addUser({ login, password, role });
-      if (result.success) { showToast('✅ Пользователь добавлен!'); closeModal(); await loadData(); }
+      if (!login || !password) return showToast('Заполните поля', 'error');
+      const result = await window.electronAPI.addUser({ login, password, role, currentUserRole: currentUser.role });
+      if (result.success) { showToast('✅ Добавлен!'); closeModal(); await loadData(); }
       else showToast('❌ ' + result.error, 'error');
-    }
-    async function toggleUserStatus(id, status) {
-      await window.electronAPI.toggleUserStatus({ id, status });
-      showToast(status === 'active' ? '✅ Пользователь разблокирован' : '🔴 Пользователь заблокирован');
-      await loadData();
-    }
-    async function deleteUser(id) {
-      if (!confirm('Удалить пользователя?')) return;
-      await window.electronAPI.deleteUser(id);
-      showToast('✅ Пользователь удалён');
-      await loadData();
     }
 
     function openSupportModal() {
       document.getElementById('modalTitle').textContent = '📨 Техподдержка';
-      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Сообщение</label><textarea id="supportText" class="input-field w-full h-32" placeholder="Опишите вашу проблему..."></textarea></div></div>`;
+      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Сообщение</label><textarea id="supportText" class="input-field w-full h-32"></textarea></div></div>`;
       document.getElementById('modalSaveBtn').onclick = sendSupportMessage;
       openModal();
     }
@@ -575,16 +552,13 @@
       const text = document.getElementById('supportText').value.trim();
       if (!text) return showToast('Введите сообщение', 'error');
       const admin = users.find(u => u.role === 'admin');
-      if (admin) {
-        await window.electronAPI.sendNotification({ userId: admin.id, fromId: currentUser.id, text: 'Техподдержка от ' + currentUser.login + ': ' + text, type: 'support' });
-      }
-      showToast('✅ Сообщение отправлено!');
-      closeModal();
+      if (admin) await window.electronAPI.sendNotification({ userId: admin.id, fromId: currentUser.id, text: 'От ' + currentUser.login + ': ' + text, type: 'support' });
+      showToast('✅ Отправлено!'); closeModal();
     }
 
     async function changePassword() {
       const newPassword = document.getElementById('newPassword').value;
-      if (!newPassword) return showToast('Введите новый пароль', 'error');
+      if (!newPassword) return showToast('Введите пароль', 'error');
       const result = await window.electronAPI.updateUser({ id: currentUser.id, password: newPassword, currentUserId: currentUser.id, currentUserRole: currentUser.role });
       if (result.success) { showToast('✅ Пароль изменён!'); document.getElementById('newPassword').value = ''; }
       else showToast('❌ ' + result.error, 'error');
@@ -598,7 +572,7 @@
         a.href = URL.createObjectURL(blob);
         a.download = 'hubpro-export.json';
         a.click();
-        showToast('✅ Экспорт завершён');
+        showToast('✅ Экспорт');
       }
     }
     async function importData(input) {
@@ -609,16 +583,16 @@
         try {
           const data = JSON.parse(e.target.result);
           const result = await window.electronAPI.importData(data);
-          if (result.success) { showToast('✅ Импорт завершён'); await loadData(); }
+          if (result.success) { showToast('✅ Импорт'); await loadData(); }
           else showToast('❌ ' + result.error, 'error');
-        } catch(err) { showToast('❌ Ошибка файла', 'error'); }
+        } catch(err) { showToast('❌ Ошибка', 'error'); }
       };
       reader.readAsText(file);
     }
 
     function loadAbout() {
       window.electronAPI.getVersion().then(v => {
-        document.getElementById('aboutInfo').innerHTML = `<div>Версия: ${v.version}</div><div class="mt-2">История версий:</div>${v.updates.map(u => `<div>• v${u.version} (${u.date}): ${u.changes.join(', ')}</div>`).join('')}`;
+        document.getElementById('aboutInfo').innerHTML = `<div>Версия: ${v.version}</div><div class="mt-2">История:</div>${v.updates.map(u => `<div>• v${u.version}: ${u.changes.join(', ')}</div>`).join('')}`;
       });
     }
 
@@ -643,7 +617,7 @@
       }
     });
     window.electronAPI.onScheduleExecuted((data) => {
-      showToast(data.success ? '✅ Расписание выполнено: ' + data.message : '❌ Ошибка: ' + data.error, data.success ? 'success' : 'error');
+      showToast(data.success ? '✅ Выполнено' : '❌ Ошибка', data.success ? 'success' : 'error');
       loadData();
     });
     document.getElementById('chatInput').addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
