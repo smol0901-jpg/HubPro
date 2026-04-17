@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateUser: (data) => ipcRenderer.invoke('auth:updateUser', data),
   deleteUser: (id) => ipcRenderer.invoke('auth:deleteUser', id),
   toggleUserStatus: (data) => ipcRenderer.invoke('auth:toggleUserStatus', data),
+  getActivityLog: () => ipcRenderer.invoke('auth:getActivityLog'),
   getBots: () => ipcRenderer.invoke('db:getBots'),
   addBot: (data) => ipcRenderer.invoke('db:addBot', data),
   updateBot: (data) => ipcRenderer.invoke('db:updateBot', data),
