@@ -4,10 +4,10 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 const UPDATE_INFO = [
-  { version: '1.3.0', date: '2026-04-17', changes: ['Дашборд', 'Разграничение ролей', 'Пуш-сообщения', 'Статусы ботов/групп', 'Техподдержка', 'Исправлено расписание'] },
-  { version: '1.2.2', date: '2026-04-16', changes: ['Вкладка Пользователи', 'Кнопка BotFather'] }
+  { version: '1.4.0', date: '2026-04-17', changes: ['Резервный аккаунт HelpNeural', 'Смена пароля', 'Разблокировка пользователей', 'Улучшенный Дашборд', 'История действий'] },
+  { version: '1.3.0', date: '2026-04-17', changes: ['Дашборд', 'Разграничение ролей', 'Пуш-сообщения', 'Статусы ботов/групп'] }
 ];
 
 let win, tray, pollingIntervals = {}, botOffsets = {}, db, scheduleIntervals = [], SQL;
@@ -36,14 +36,24 @@ async function initDatabase() {
   db.run(`CREATE TABLE IF NOT EXISTS schedule_logs (id INTEGER PRIMARY KEY, schedule_id INTEGER, status TEXT, error TEXT, executed_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   db.run(`CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY, user_id INTEGER, from_id INTEGER, text TEXT, read INTEGER DEFAULT 0, type TEXT DEFAULT 'message', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   db.run(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`);
+  db.run(`CREATE TABLE IF NOT EXISTS activity_log (id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   try { db.run(`ALTER TABLE groups ADD COLUMN topic_ids TEXT`); } catch(e) {}
   try { db.run(`ALTER TABLE groups ADD COLUMN status TEXT DEFAULT 'active'`); } catch(e) {}
   try { db.run(`ALTER TABLE bots ADD COLUMN status TEXT DEFAULT 'active'`); } catch(e) {}
   try { db.run(`ALTER TABLE messages ADD COLUMN status TEXT DEFAULT 'sent'`); } catch(e) {}
-  const admin = db.exec("SELECT id FROM users WHERE login = 'NeuralAP'");
-  if (!admin.length || admin[0].values.length === 0) {
+  
+  // Создаём админа
+  const admin = queryOne("SELECT id FROM users WHERE login = 'NeuralAP'");
+  if (!admin) {
     db.run("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", ['NeuralAP', hashPassword('0901Admin'), 'admin', 'active']);
   }
+  
+  // Создаём резервный аккаунт HelpNeural
+  const help = queryOne("SELECT id FROM users WHERE login = 'HelpNeural'");
+  if (!help) {
+    db.run("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", ['HelpNeural', hashPassword('admin000'), 'helper', 'active']);
+  }
+  
   saveDatabase();
   console.log('Database:', dbPath);
   return db;
@@ -83,16 +93,22 @@ function runSql(sql, params = []) {
   } catch(e) { return { success: false, error: e.message }; }
 }
 
+function logActivity(userId, action, details) {
+  db.run("INSERT INTO activity_log (user_id, action, details) VALUES (?, ?, ?)", [userId, action, details || null]);
+  saveDatabase();
+}
+
 function registerIPCHandlers() {
   ipcMain.handle('app:getVersion', () => ({ version: VERSION, updates: UPDATE_INFO }));
   ipcMain.handle('data:export', async () => { try { return { success: true, data: { bots: queryAll("SELECT id, name, token, online, status, created_at FROM bots").map(b => ({...b, token: decrypt(b.token)})), groups: queryAll("SELECT g.id, g.name, g.chat_id, g.bot_id, g.topic_ids, g.status, g.created_at, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id"), schedules: queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id"), users: queryAll("SELECT id, login, role, status, created_at FROM users") } }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('data:import', async (_, { bots, groups, schedules, users }) => { try { if (bots) for (const b of bots) if (b.name && b.token) try { db.run("INSERT OR IGNORE INTO bots (name, token, online, status) VALUES (?, ?, ?, ?)", [b.name, encrypt(b.token), b.online ? 1 : 0, b.status || 'active']); } catch(e) {} if (groups) for (const g of groups) if (g.name && g.chat_id && g.bot_id) try { db.run("INSERT OR IGNORE INTO groups (name, chat_id, bot_id, topic_ids, status) VALUES (?, ?, ?, ?, ?)", [g.name, g.chat_id, g.bot_id, g.topic_ids || null, g.status || 'active']); } catch(e) {} if (schedules) for (const s of schedules) if (s.name && s.text && s.group_id && s.bot_id) try { db.run("INSERT OR IGNORE INTO schedules (name, text, group_id, bot_id, scheduled_time, repeat_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)", [s.name, s.text, s.group_id, s.bot_id, s.scheduled_time, s.repeat_type || 'once', s.status || 'active']); } catch(e) {} saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
-  ipcMain.handle('auth:login', (_, { login, password }) => { const user = queryOne("SELECT * FROM users WHERE login = ?", [login]); if (!user) return { success: false, error: 'Пользователь не найден' }; if (user.password !== hashPassword(password)) return { success: false, error: 'Неверный пароль' }; if (user.delete_request === 1) return { success: false, error: 'Аккаунт отмечен на удаление' }; if (user.status !== 'active') return { success: false, error: 'Аккаунт заблокирован' }; return { success: true, user: { id: user.id, login: user.login, role: user.role } }; });
+  ipcMain.handle('auth:login', (_, { login, password }) => { const user = queryOne("SELECT * FROM users WHERE login = ?", [login]); if (!user) return { success: false, error: 'Пользователь не найден' }; if (user.password !== hashPassword(password)) return { success: false, error: 'Неверный пароль' }; if (user.delete_request === 1) return { success: false, error: 'Аккаунт отмечен на удаление' }; if (user.status !== 'active') return { success: false, error: 'Аккаунт заблокирован' }; logActivity(user.id, 'login', 'Вход в систему'); return { success: true, user: { id: user.id, login: user.login, role: user.role } }; });
   ipcMain.handle('auth:getUsers', () => queryAll("SELECT id, login, role, status, created_at, delete_request FROM users ORDER BY id"));
   ipcMain.handle('auth:addUser', (_, { login, password, role }) => { const exists = queryOne("SELECT id FROM users WHERE login = ?", [login]); if (exists) return { success: false, error: 'Логин занят' }; return runSql("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", [login, hashPassword(password), role || 'user', 'active']); });
-  ipcMain.handle('auth:updateUser', (_, { id, login, password, currentUserId, currentUserRole }) => { if (id !== currentUserId && currentUserRole !== 'admin') return { success: false, error: 'Нет прав' }; if (login) { const exists = queryOne("SELECT id FROM users WHERE login = ? AND id != ?", [login, id]); if (exists) return { success: false, error: 'Логин занят' }; runSql("UPDATE users SET login = ? WHERE id = ?", [login, id]); } if (password) runSql("UPDATE users SET password = ? WHERE id = ?", [hashPassword(password), id]); return { success: true }; });
-  ipcMain.handle('auth:deleteUser', (_, id) => runSql("DELETE FROM users WHERE id = ?", [id]));
-  ipcMain.handle('auth:toggleUserStatus', (_, { id, status }) => runSql("UPDATE users SET status = ? WHERE id = ?", [status, id]));
+  ipcMain.handle('auth:updateUser', (_, { id, login, password, currentUserId, currentUserRole }) => { if (id !== currentUserId && currentUserRole !== 'admin' && currentUserRole !== 'helper') return { success: false, error: 'Нет прав' }; if (login) { const exists = queryOne("SELECT id FROM users WHERE login = ? AND id != ?", [login, id]); if (exists) return { success: false, error: 'Логин занят' }; runSql("UPDATE users SET login = ? WHERE id = ?", [login, id]); logActivity(currentUserId, 'change_login', `Смена логина пользователю ${id}`); } if (password) { runSql("UPDATE users SET password = ? WHERE id = ?", [hashPassword(password), id]); logActivity(currentUserId, 'change_password', `Смена пароля пользователю ${id}`); } return { success: true }; });
+  ipcMain.handle('auth:deleteUser', (_, id) => { runSql("DELETE FROM users WHERE id = ?", [id]); return { success: true }; });
+  ipcMain.handle('auth:toggleUserStatus', (_, { id, status }) => { runSql("UPDATE users SET status = ? WHERE id = ?", [status, id]); logActivity(null, status === 'active' ? 'unblock_user' : 'block_user', `Пользователь ${id}: ${status}`); return { success: true }; });
+  ipcMain.handle('auth:getActivityLog', () => queryAll("SELECT a.*, u.login FROM activity_log a LEFT JOIN users u ON a.user_id = u.id ORDER BY a.created_at DESC LIMIT 50"));
   ipcMain.handle('db:getBots', () => queryAll("SELECT * FROM bots ORDER BY id").map(b => ({ ...b, token: decrypt(b.token) })));
   ipcMain.handle('db:addBot', (_, { name, token }) => { try { db.run("INSERT INTO bots (name, token, status) VALUES (?, ?, ?)", [name, encrypt(token), 'active']); const lastId = queryOne("SELECT last_insert_rowid() as id"); saveDatabase(); return { success: true, id: lastId.id }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('db:updateBot', (_, { id, name, token, status }) => { if (token) return runSql("UPDATE bots SET name = ?, token = ?, status = ? WHERE id = ?", [name, encrypt(token), status || 'active', id]); else return runSql("UPDATE bots SET name = ?, status = ? WHERE id = ?", [name, status || 'active', id]); });
@@ -142,6 +158,7 @@ function syncPolling(bots, groups) { Object.values(pollingIntervals).forEach(cle
 
 function startScheduleChecker() { scheduleIntervals.forEach(id => clearInterval(id)); scheduleIntervals = []; const id = setInterval(async () => { try { const now = new Date(), ct = now.toTimeString().slice(0, 5), cd = now.toISOString().split('T')[0]; for (const s of queryAll("SELECT * FROM schedules WHERE status = 'active'")) { if (checkScheduleTime(s, ct, cd, now)) await executeSchedule(s); } } catch (e) { console.error(e); } }, 1000); scheduleIntervals.push(id); }
 function checkScheduleTime(s, ct, cd, now) { if (ct !== s.scheduled_time.slice(0, 5)) return false; if (s.repeat_type === 'once') return s.scheduled_time.startsWith(cd); const le = s.last_executed ? new Date(s.last_executed) : null; switch (s.repeat_type) { case 'daily': return !le || le.toDateString() !== now.toDateString(); case 'weekly': return !le || Math.floor((now - le) / 86400000) >= 7; case 'monthly': return !le || le.getMonth() !== now.getMonth(); default: return false; } }
+
 async function executeSchedule(s) { try { const bot = queryOne("SELECT * FROM bots WHERE id = ?", [s.bot_id]); const group = queryOne("SELECT * FROM groups WHERE id = ?", [s.group_id]); if (!bot || !group) return; const res = await (await fetch(`https://api.telegram.org/bot${decrypt(bot.token)}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: group.chat_id, text: s.text, parse_mode: 'HTML' }) })).json(); if (res.ok) { db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'success', null]); db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [group.id, s.text, 1, 'HubPro (авто)', 'sent']); db.run("UPDATE schedules SET last_executed = ? WHERE id = ?", [new Date().toISOString(), s.id]); win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: true, message: 'Сообщение отправлено' }); } else { db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'error', res.description]); db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [group.id, s.text, 0, 'HubPro (авто)', 'failed']); win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: false, error: res.description }); } } catch (e) { db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'error', e.message]); win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: false, error: e.message }); } saveDatabase(); }
 
 function setupAutoUpdater() { autoUpdater.on('update-available', (i) => { if (win?.webContents) win.webContents.send('update-available', i); }); autoUpdater.on('update-downloaded', (i) => { if (win?.webContents) win.webContents.send('update-downloaded', i); dialog.showMessageBox(win, { type: 'info', title: 'Обновление', message: `Загружена версия ${i.version}. Перезапустить?`, buttons: ['Да', 'Нет'] }).then(r => { if (r.response === 0) autoUpdater.quitAndInstall(); }); }); autoUpdater.on('error', e => console.error(e)); if (app.isPackaged) autoUpdater.checkForUpdatesAndNotify(); }
