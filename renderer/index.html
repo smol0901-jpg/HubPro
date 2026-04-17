@@ -31,6 +31,7 @@
     .badge-active { background: rgba(16,185,129,0.2); color: #10b981; }
     .badge-inactive { background: rgba(239,68,68,0.2); color: #ef4444; }
     .badge-admin { background: rgba(139,92,246,0.2); color: #8b5cf6; }
+    .badge-helper { background: rgba(245,158,11,0.2); color: #f59e0b; }
     .badge-user { background: rgba(59,130,246,0.2); color: #3b82f6; }
     ::-webkit-scrollbar { width: 8px; }
     ::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
@@ -47,6 +48,10 @@
         <input type="password" id="loginPassword" class="input-field w-full" placeholder="Пароль">
         <button onclick="login()" class="btn-primary w-full">Войти</button>
       </div>
+      <div class="mt-4 text-xs text-slate-500 text-center">
+        <p>Админ: NeuralAP / 0901Admin</p>
+        <p>Помощник: HelpNeural / admin000</p>
+      </div>
     </div>
   </div>
 
@@ -62,6 +67,7 @@
         <div class="nav-item" onclick="showSection('schedule')">📅 Расписание</div>
         <div class="nav-item admin-only" onclick="showSection('users')">👤 Пользователи</div>
         <div class="nav-item" onclick="showSection('notifications')">🔔 Уведомления</div>
+        <div class="nav-item" onclick="showSection('activity')">📝 История</div>
         <div class="nav-item" onclick="showSection('settings')">⚙️ Настройки</div>
       </nav>
       <div class="mt-auto pt-4 border-t border-white/10">
@@ -144,6 +150,11 @@
         <div id="notificationsList" class="space-y-4"></div>
       </div>
 
+      <div id="activity" class="section hidden">
+        <h2 class="text-2xl font-bold mb-6">📝 История действий</h2>
+        <div id="activityList" class="space-y-2"></div>
+      </div>
+
       <div id="settings" class="section hidden">
         <h2 class="text-2xl font-bold mb-6">⚙️ Настройки</h2>
         <div class="glass p-6 rounded-xl space-y-4 max-w-lg">
@@ -174,7 +185,7 @@
 
   <script>
     let currentUser = null;
-    let bots = [], groups = [], messages = [], schedules = [], users = [], notifications = [];
+    let bots = [], groups = [], messages = [], schedules = [], users = [], notifications = [], activityLog = [];
     let currentChatGroup = null;
 
     async function login() {
@@ -196,8 +207,10 @@
     }
 
     function applyRolePermissions() {
+      const isAdmin = currentUser.role === 'admin';
+      const isHelper = currentUser.role === 'helper';
       document.querySelectorAll('.admin-only').forEach(el => {
-        el.style.display = currentUser.role === 'admin' ? 'block' : 'none';
+        el.style.display = (isAdmin || isHelper) ? 'block' : 'none';
       });
     }
 
@@ -212,6 +225,7 @@
       groups = await window.electronAPI.getGroups();
       schedules = await window.electronAPI.getSchedules();
       users = await window.electronAPI.getUsers();
+      activityLog = await window.electronAPI.getActivityLog();
       const stats = await window.electronAPI.getStats();
       document.getElementById('statBots').textContent = stats.botCount;
       document.getElementById('statActiveBots').textContent = 'Активных: ' + stats.activeBots;
@@ -226,7 +240,7 @@
       document.getElementById('msgFailed').textContent = stats.failedMessages;
       document.getElementById('schedTotal').textContent = stats.scheduleCount;
       document.getElementById('schedActive').textContent = stats.activeSchedules;
-      renderBots(); renderGroups(); renderSchedules(); renderUsers(); renderChatList(); loadAbout();
+      renderBots(); renderGroups(); renderSchedules(); renderUsers(); renderChatList(); renderActivity(); loadAbout();
     }
 
     async function checkNotifications() {
@@ -244,6 +258,18 @@
       document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
       event.target.classList.add('active');
       if (id === 'notifications') loadNotifications();
+    }
+
+    function renderActivity() {
+      document.getElementById('activityList').innerHTML = activityLog.length ? activityLog.map(a => `
+        <div class="glass p-3 rounded-lg flex justify-between items-center">
+          <div>
+            <div class="font-bold text-sm">${escapeHtml(a.login || 'Система')}</div>
+            <div class="text-xs text-slate-400">${a.action} ${a.details || ''}</div>
+          </div>
+          <div class="text-xs text-slate-500">${new Date(a.created_at).toLocaleString()}</div>
+        </div>
+      `).join('') : '<div class="text-slate-400">Нет записей</div>';
     }
 
     function renderBots() {
@@ -281,20 +307,36 @@
     }
 
     function renderUsers() {
-      if (currentUser.role !== 'admin') return;
+      if (currentUser.role !== 'admin' && currentUser.role !== 'helper') return;
       document.getElementById('usersList').innerHTML = users.map(u => `
         <div class="glass p-4 rounded-xl">
           <div class="flex justify-between items-start mb-2">
             <div class="font-bold">${escapeHtml(u.login)}</div>
-            <span class="badge ${u.role === 'admin' ? 'badge-admin' : 'badge-user'}">${u.role === 'admin' ? '👑 Админ' : '👤 Пользователь'}</span>
+            <span class="badge ${u.role === 'admin' ? 'badge-admin' : u.role === 'helper' ? 'badge-helper' : 'badge-user'}">${u.role === 'admin' ? '👑 Админ' : u.role === 'helper' ? '🔧 Помощник' : '👤 Пользователь'}</span>
           </div>
           <div class="text-sm text-slate-400 mb-2">Статус: <span class="${u.status === 'active' ? 'text-green-400' : 'text-red-400'}">${u.status === 'active' ? 'Активен' : 'Заблокирован'}</span></div>
           <div class="flex gap-2 flex-wrap">
             <button onclick="toggleUserStatus(${u.id}, '${u.status === 'active' ? 'inactive' : 'active'}')" class="btn-secondary text-xs py-1 px-2">${u.status === 'active' ? '🔴 Заблокировать' : '🟢 Разблокировать'}</button>
-            ${u.id !== currentUser.id ? `<button onclick="deleteUser(${u.id})" class="btn-secondary text-xs py-1 px-2">🗑️</button>` : ''}
+            ${u.id !== currentUser.id ? `<button onclick="editUser(${u.id})" class="btn-secondary text-xs py-1 px-2">✏️ Пароль</button>${currentUser.role === 'admin' ? `<button onclick="deleteUser(${u.id})" class="btn-secondary text-xs py-1 px-2">🗑️</button>` : ''}` : ''}
           </div>
         </div>
       `).join('') || '<div class="text-slate-400">Нет пользователей</div>';
+    }
+
+    function editUser(id) {
+      const u = users.find(user => user.id === id);
+      document.getElementById('modalTitle').textContent = '🔐 Сменить пароль пользователю';
+      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Новый пароль</label><input type="password" id="userNewPassword" class="input-field w-full" placeholder="Новый пароль"></div></div>`;
+      document.getElementById('modalSaveBtn').onclick = () => saveUserPassword(id);
+      openModal();
+    }
+
+    async function saveUserPassword(id) {
+      const password = document.getElementById('userNewPassword').value;
+      if (!password) return showToast('Введите пароль', 'error');
+      const result = await window.electronAPI.updateUser({ id, password, currentUserId: currentUser.id, currentUserRole: currentUser.role });
+      if (result.success) { showToast('✅ Пароль изменён!'); closeModal(); await loadData(); }
+      else showToast('❌ ' + result.error, 'error');
     }
 
     async function loadNotifications() {
@@ -335,7 +377,7 @@
     function renderChatMessages() {
       document.getElementById('chatMessages').innerHTML = messages.map(m => `
         <div class="${m.sent ? 'message-sent' : 'message-received'}">
-          <div class="text-xs text-slate-400 mb-1">${m.sender || ''} • ${new Date(m.time).toLocaleTimeString()} • <span class="${m.status === 'sent' ? 'text-green-400' : m.status === 'failed' ? 'text-red-400' : 'text-blue-400'}">${m.status === 'sent' ? '✓ Отправлено' : m.status === 'failed' ? '✗ Ошибка' : '↓ Получено'}</span></div>
+          <div class="text-xs text-slate-400 mb-1">${m.sender || ''} • ${new Date(m.time).toLocaleTimeString()} • <span class="${m.status === 'sent' ? 'text-green-400' : m.status === 'failed' ? 'text-red-400' : 'text-blue-400'}">${m.status === 'sent' ? '✓' : m.status === 'failed' ? '✗' : '↓'}</span></div>
           <div>${escapeHtml(m.text)}</div>
         </div>
       `).join('');
@@ -498,7 +540,7 @@
     function openAddUserModal() {
       if (currentUser.role !== 'admin') return showToast('Только админ', 'error');
       document.getElementById('modalTitle').textContent = '👤 Добавить пользователя';
-      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Логин</label><input type="text" id="userLogin" class="input-field w-full"></div><div><label class="block text-sm text-slate-400 mb-2">Пароль</label><input type="password" id="userPassword" class="input-field w-full"></div><div><label class="block text-sm text-slate-400 mb-2">Роль</label><select id="userRole" class="input-field w-full"><option value="user">Пользователь</option><option value="admin">Админ</option></select></div></div>`;
+      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Логин</label><input type="text" id="userLogin" class="input-field w-full"></div><div><label class="block text-sm text-slate-400 mb-2">Пароль</label><input type="password" id="userPassword" class="input-field w-full"></div><div><label class="block text-sm text-slate-400 mb-2">Роль</label><select id="userRole" class="input-field w-full"><option value="user">Пользователь</option><option value="helper">Помощник</option><option value="admin">Админ</option></select></div></div>`;
       document.getElementById('modalSaveBtn').onclick = saveUser;
       openModal();
     }
