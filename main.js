@@ -6,8 +6,8 @@ const crypto = require('crypto');
 
 const VERSION = '1.4.0';
 const UPDATE_INFO = [
-  { version: '1.4.0', date: '2026-04-17', changes: ['Резервный аккаунт HelpNeural', 'Смена пароля', 'Разблокировка пользователей', 'Улучшенный Дашборд', 'История действий'] },
-  { version: '1.3.0', date: '2026-04-17', changes: ['Дашборд', 'Разграничение ролей', 'Пуш-сообщения', 'Статусы ботов/групп'] }
+  { version: '1.4.0', date: '2026-04-17', changes: ['Резервный аккаунт HelpNeural', 'Смена пароля', 'Разблокировка', 'История действий'] },
+  { version: '1.3.0', date: '2026-04-17', changes: ['Дашборд', 'Разграничение ролей', 'Пуш-сообщения'] }
 ];
 
 let win, tray, pollingIntervals = {}, botOffsets = {}, db, scheduleIntervals = [], SQL;
@@ -28,27 +28,65 @@ async function initDatabase() {
     data = fs.readFileSync(dbPath);
   }
   db = new SQL.Database(data ? new Uint8Array(data) : undefined);
-  db.run(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, login TEXT UNIQUE, password TEXT, role TEXT DEFAULT 'user', status TEXT DEFAULT 'active', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, delete_request INTEGER DEFAULT 0)`);
-  db.run(`CREATE TABLE IF NOT EXISTS bots (id INTEGER PRIMARY KEY, name TEXT, token TEXT UNIQUE, status TEXT DEFAULT 'active', online INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  db.run(`CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY, name TEXT, chat_id TEXT, bot_id INTEGER, topic_ids TEXT, status TEXT DEFAULT 'active', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  db.run(`CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, group_id INTEGER, text TEXT, sent INTEGER DEFAULT 1, sender TEXT, status TEXT DEFAULT 'sent', time DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  db.run(`CREATE TABLE IF NOT EXISTS schedules (id INTEGER PRIMARY KEY, name TEXT, text TEXT, group_id INTEGER, bot_id INTEGER, scheduled_time TEXT, repeat_type TEXT DEFAULT 'once', status TEXT DEFAULT 'active', last_executed DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  db.run(`CREATE TABLE IF NOT EXISTS schedule_logs (id INTEGER PRIMARY KEY, schedule_id INTEGER, status TEXT, error TEXT, executed_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  db.run(`CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY, user_id INTEGER, from_id INTEGER, text TEXT, read INTEGER DEFAULT 0, type TEXT DEFAULT 'message', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  db.run(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`);
-  db.run(`CREATE TABLE IF NOT EXISTS activity_log (id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  try { db.run(`ALTER TABLE groups ADD COLUMN topic_ids TEXT`); } catch(e) {}
-  try { db.run(`ALTER TABLE groups ADD COLUMN status TEXT DEFAULT 'active'`); } catch(e) {}
-  try { db.run(`ALTER TABLE bots ADD COLUMN status TEXT DEFAULT 'active'`); } catch(e) {}
-  try { db.run(`ALTER TABLE messages ADD COLUMN status TEXT DEFAULT 'sent'`); } catch(e) {}
   
-  // Создаём админа
+  // Проверяем какие таблицы существуют
+  const tables = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+  const tableNames = tables.length > 0 ? tables[0].values.map(t => t[0]) : [];
+  
+  // Создаём таблицы если их нет
+  if (!tableNames.includes('users')) {
+    db.run(`CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT UNIQUE, password TEXT, role TEXT DEFAULT 'user', status TEXT DEFAULT 'active', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, delete_request INTEGER DEFAULT 0)`);
+  } else {
+    // Миграция: добавляем колонку status если её нет
+    try { db.run("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'"); } catch(e) {}
+  }
+  
+  if (!tableNames.includes('bots')) {
+    db.run(`CREATE TABLE bots (id INTEGER PRIMARY KEY, name TEXT, token TEXT UNIQUE, status TEXT DEFAULT 'active', online INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+  } else {
+    try { db.run("ALTER TABLE bots ADD COLUMN status TEXT DEFAULT 'active'"); } catch(e) {}
+  }
+  
+  if (!tableNames.includes('groups')) {
+    db.run(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, chat_id TEXT, bot_id INTEGER, topic_ids TEXT, status TEXT DEFAULT 'active', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+  } else {
+    try { db.run("ALTER TABLE groups ADD COLUMN topic_ids TEXT"); } catch(e) {}
+    try { db.run("ALTER TABLE groups ADD COLUMN status TEXT DEFAULT 'active'"); } catch(e) {}
+  }
+  
+  if (!tableNames.includes('messages')) {
+    db.run(`CREATE TABLE messages (id INTEGER PRIMARY KEY, group_id INTEGER, text TEXT, sent INTEGER DEFAULT 1, sender TEXT, status TEXT DEFAULT 'sent', time DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+  } else {
+    try { db.run("ALTER TABLE messages ADD COLUMN status TEXT DEFAULT 'sent'"); } catch(e) {}
+  }
+  
+  if (!tableNames.includes('schedules')) {
+    db.run(`CREATE TABLE schedules (id INTEGER PRIMARY KEY, name TEXT, text TEXT, group_id INTEGER, bot_id INTEGER, scheduled_time TEXT, repeat_type TEXT DEFAULT 'once', status TEXT DEFAULT 'active', last_executed DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+  }
+  
+  if (!tableNames.includes('schedule_logs')) {
+    db.run(`CREATE TABLE schedule_logs (id INTEGER PRIMARY KEY, schedule_id INTEGER, status TEXT, error TEXT, executed_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+  }
+  
+  if (!tableNames.includes('notifications')) {
+    db.run(`CREATE TABLE notifications (id INTEGER PRIMARY KEY, user_id INTEGER, from_id INTEGER, text TEXT, read INTEGER DEFAULT 0, type TEXT DEFAULT 'message', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+  }
+  
+  if (!tableNames.includes('settings')) {
+    db.run(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)`);
+  }
+  
+  if (!tableNames.includes('activity_log')) {
+    db.run(`CREATE TABLE activity_log (id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+  }
+  
+  // Создаём админа если нет
   const admin = queryOne("SELECT id FROM users WHERE login = 'NeuralAP'");
   if (!admin) {
     db.run("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", ['NeuralAP', hashPassword('0901Admin'), 'admin', 'active']);
   }
   
-  // Создаём резервный аккаунт HelpNeural
+  // Создаём резервный аккаунт HelpNeural если нет
   const help = queryOne("SELECT id FROM users WHERE login = 'HelpNeural'");
   if (!help) {
     db.run("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", ['HelpNeural', hashPassword('admin000'), 'helper', 'active']);
@@ -106,7 +144,7 @@ function registerIPCHandlers() {
   ipcMain.handle('auth:getUsers', () => queryAll("SELECT id, login, role, status, created_at, delete_request FROM users ORDER BY id"));
   ipcMain.handle('auth:addUser', (_, { login, password, role }) => { const exists = queryOne("SELECT id FROM users WHERE login = ?", [login]); if (exists) return { success: false, error: 'Логин занят' }; return runSql("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", [login, hashPassword(password), role || 'user', 'active']); });
   ipcMain.handle('auth:updateUser', (_, { id, login, password, currentUserId, currentUserRole }) => { if (id !== currentUserId && currentUserRole !== 'admin' && currentUserRole !== 'helper') return { success: false, error: 'Нет прав' }; if (login) { const exists = queryOne("SELECT id FROM users WHERE login = ? AND id != ?", [login, id]); if (exists) return { success: false, error: 'Логин занят' }; runSql("UPDATE users SET login = ? WHERE id = ?", [login, id]); logActivity(currentUserId, 'change_login', `Смена логина пользователю ${id}`); } if (password) { runSql("UPDATE users SET password = ? WHERE id = ?", [hashPassword(password), id]); logActivity(currentUserId, 'change_password', `Смена пароля пользователю ${id}`); } return { success: true }; });
-  ipcMain.handle('auth:deleteUser', (_, id) => { runSql("DELETE FROM users WHERE id = ?", [id]); return { success: true }; });
+  ipcMain.handle('auth:deleteUser', (_, id) => runSql("DELETE FROM users WHERE id = ?", [id]));
   ipcMain.handle('auth:toggleUserStatus', (_, { id, status }) => { runSql("UPDATE users SET status = ? WHERE id = ?", [status, id]); logActivity(null, status === 'active' ? 'unblock_user' : 'block_user', `Пользователь ${id}: ${status}`); return { success: true }; });
   ipcMain.handle('auth:getActivityLog', () => queryAll("SELECT a.*, u.login FROM activity_log a LEFT JOIN users u ON a.user_id = u.id ORDER BY a.created_at DESC LIMIT 50"));
   ipcMain.handle('db:getBots', () => queryAll("SELECT * FROM bots ORDER BY id").map(b => ({ ...b, token: decrypt(b.token) })));
