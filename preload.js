@@ -3,6 +3,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getVersion: () => ipcRenderer.invoke('app:getVersion'),
   getPermissions: (role) => ipcRenderer.invoke('app:getPermissions', role),
   checkSchedule: () => ipcRenderer.invoke('app:checkSchedule'),
+  reloadData: () => ipcRenderer.invoke('app:reloadData'),
   exportData: () => ipcRenderer.invoke('data:export'),
   importData: (data) => ipcRenderer.invoke('data:import', data),
   login: (data) => ipcRenderer.invoke('auth:login', data),
