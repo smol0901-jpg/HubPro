@@ -1,16 +1,17 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, nativeImage, Notification } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
-const VERSION = '1.6.0';
+const VERSION = '1.7.0';
 const UPDATE_INFO = [
-  { version: '1.6.0', date: '2026-04-18', changes: ['Улучшенный Дашборд с графиками', 'Шаблоны сообщений', 'Мультичат', 'Улучшенный визуал'] },
-  { version: '1.5.2', date: '2026-04-18', changes: ['Исправлена ошибка токена', 'Выбор бота в группе'] }
+  { version: '1.7.0', date: '2026-04-20', changes: ['Системный трей', 'Улучшенное расписание', 'Уведомления Windows', 'Работа в фоне'] },
+  { version: '1.6.0', date: '2026-04-20', changes: ['Дашборд с графиками', 'Шаблоны', 'Мультичат'] }
 ];
 
 let win, tray, pollingIntervals = {}, botOffsets = {}, db, scheduleIntervals = [], SQL;
+let lastScheduleCheck = Date.now();
 
 const ENCRYPTION_KEY = crypto.scryptSync(app.getPath('userData'), 'hubpro-salt', 32);
 const IV_LENGTH = 16;
@@ -46,6 +47,17 @@ function encrypt(text) { if (!text) return text; const iv = crypto.randomBytes(I
 function decrypt(text) { if (!text || !text.includes(':')) return text; try { const parts = text.split(':'); const iv = Buffer.from(parts[0], 'hex'); const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv); let decrypted = decipher.update(parts[1], 'hex', 'utf8'); decrypted += decipher.final('utf8'); return decrypted; } catch (e) { return text; } }
 function hashPassword(password) { return crypto.createHash('sha256').update(password).digest('hex'); }
 
+function showNotification(title, body) {
+  if (Notification.isSupported()) {
+    const notification = new Notification({
+      title: title,
+      body: body,
+      icon: path.join(__dirname, 'build', 'icon.png')
+    });
+    notification.show();
+  }
+}
+
 const ROLE_PERMISSIONS = {
   admin: { tabs: ['dashboard', 'bots', 'groups', 'chat', 'schedule', 'users', 'notifications', 'activity', 'ai_monitor', 'settings', 'templates'] },
   helper: { tabs: ['users', 'notifications', 'settings'] },
@@ -80,8 +92,6 @@ async function initDatabase() {
   if (!tableNames.includes('notifications')) db.run(`CREATE TABLE notifications (id INTEGER PRIMARY KEY, user_id INTEGER, from_id INTEGER, text TEXT, read INTEGER DEFAULT 0, type TEXT DEFAULT 'message', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   if (!tableNames.includes('settings')) db.run(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)`);
   if (!tableNames.includes('activity_log')) db.run(`CREATE TABLE activity_log (id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  
-  // Templates table
   if (!tableNames.includes('templates')) db.run(`CREATE TABLE templates (id INTEGER PRIMARY KEY, name TEXT, content TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   
   const admin = queryOne("SELECT id FROM users WHERE login = 'NeuralAP'");
@@ -119,6 +129,7 @@ function logActivity(userId, action, details) { db.run("INSERT INTO activity_log
 function registerIPCHandlers() {
   ipcMain.handle('app:getVersion', () => ({ version: VERSION, updates: UPDATE_INFO }));
   ipcMain.handle('app:getPermissions', (_, role) => ({ permissions: ROLE_PERMISSIONS[role] || ROLE_PERMISSIONS.user }));
+  ipcMain.handle('app:checkSchedule', () => checkAllSchedules()); // Проверка расписания
   
   ipcMain.handle('data:export', async () => { try { return { success: true, data: { bots: queryAll("SELECT id, name, token, online, status, created_at FROM bots").map(b => ({...b, token: decrypt(b.token)})), groups: queryAll("SELECT g.id, g.name, g.chat_id, g.bot_id, g.topic_ids, g.status, g.created_at, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id"), schedules: queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id"), users: queryAll("SELECT id, login, role, status, created_at FROM users"), templates: queryAll("SELECT * FROM templates") } }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('data:import', async (_, { bots, groups, schedules, users, templates }) => { try { if (bots) for (const b of bots) if (b.name && b.token) try { db.run("INSERT OR IGNORE INTO bots (name, token, online, status) VALUES (?, ?, ?, ?)", [b.name, encrypt(b.token), b.online ? 1 : 0, b.status || 'active']); } catch(e) {} if (groups) for (const g of groups) if (g.name && g.chat_id && g.bot_id) try { db.run("INSERT OR IGNORE INTO groups (name, chat_id, bot_id, topic_ids, status) VALUES (?, ?, ?, ?, ?)", [g.name, g.chat_id, g.bot_id, g.topic_ids || null, g.status || 'active']); } catch(e) {} if (schedules) for (const s of schedules) if (s.name && s.text && s.group_id && s.bot_id) try { db.run("INSERT OR IGNORE INTO schedules (name, text, group_id, bot_id, scheduled_time, repeat_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)", [s.name, s.text, s.group_id, s.bot_id, s.scheduled_time, s.repeat_type || 'once', s.status || 'active']); } catch(e) {} if (templates) for (const t of templates) if (t.name && t.content) try { db.run("INSERT OR IGNORE INTO templates (name, content) VALUES (?, ?)", [t.name, t.content]); } catch(e) {} saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
@@ -131,6 +142,7 @@ function registerIPCHandlers() {
     if (user.status !== 'active') return { success: false, error: 'Аккаунт заблокирован' }; 
     AIMonitor.log('LOGIN', user.id, `Пользователь ${user.login} вошёл`, 'low');
     logActivity(user.id, 'LOGIN', `Вход в систему`);
+    showNotification('HubPro', `${user.login} вошёл в систему`);
     return { success: true, user: { id: user.id, login: user.login, role: user.role }, permissions: ROLE_PERMISSIONS[user.role] || ROLE_PERMISSIONS.user }; 
   });
   
@@ -144,26 +156,22 @@ function registerIPCHandlers() {
   ipcMain.handle('ai:getAlerts', () => AIMonitor.getAlerts());
   ipcMain.handle('auth:getActivityLog', () => queryAll("SELECT a.*, u.login FROM activity_log a LEFT JOIN users u ON a.user_id = u.id ORDER BY a.created_at DESC LIMIT 100"));
   
-  // Bots
   ipcMain.handle('db:getBots', () => queryAll("SELECT * FROM bots ORDER BY id").map(b => ({ ...b, token: decrypt(b.token) })));
   ipcMain.handle('db:addBot', (_, { name, token }) => { try { db.run("INSERT INTO bots (name, token, status) VALUES (?, ?, ?)", [name, encrypt(token), 'active']); const lastId = queryOne("SELECT last_insert_rowid() as id"); AIMonitor.log('ADD_BOT', null, `Добавлен бот: ${name}`, 'medium'); logActivity(null, 'ADD_BOT', `Добавлен бот ${name}`); saveDatabase(); return { success: true, id: lastId.id }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('db:updateBot', (_, { id, name, token, status }) => { if (token) return runSql("UPDATE bots SET name = ?, token = ?, status = ? WHERE id = ?", [name, encrypt(token), status || 'active', id]); else return runSql("UPDATE bots SET name = ?, status = ? WHERE id = ?", [name, status || 'active', id]); });
   ipcMain.handle('db:deleteBot', (_, id) => { AIMonitor.log('DELETE_BOT', null, `Удалён бот ${id}`, 'medium'); logActivity(null, 'DELETE_BOT', `Удалён бот ${id}`); return runSql("DELETE FROM bots WHERE id = ?", [id]); });
   ipcMain.handle('db:toggleBotStatus', (_, { id, status }) => runSql("UPDATE bots SET status = ? WHERE id = ?", [status, id]));
   
-  // Groups
   ipcMain.handle('db:getGroups', () => queryAll("SELECT g.*, b.name as bot_name, b.token as bot_token FROM groups g LEFT JOIN bots b ON g.bot_id = b.id ORDER BY g.id"));
   ipcMain.handle('db:addGroup', (_, { name, chatId, botId, topicIds }) => { try { db.run("INSERT INTO groups (name, chat_id, bot_id, topic_ids, status) VALUES (?, ?, ?, ?, ?)", [name, chatId, botId, topicIds || null, 'active']); const lastId = queryOne("SELECT last_insert_rowid() as id"); AIMonitor.log('ADD_GROUP', null, `Добавлена группа: ${name}`, 'low'); logActivity(null, 'ADD_GROUP', `Добавлена группа ${name}`); saveDatabase(); return { success: true, id: lastId.id }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('db:updateGroup', (_, { id, name, chatId, botId, topicIds, status }) => runSql("UPDATE groups SET name = ?, chat_id = ?, bot_id = ?, topic_ids = ?, status = ? WHERE id = ?", [name, chatId, botId, topicIds || null, status || 'active', id]));
   ipcMain.handle('db:deleteGroup', (_, id) => { AIMonitor.log('DELETE_GROUP', null, `Удалена группа ${id}`, 'medium'); logActivity(null, 'DELETE_GROUP', `Удалена группа ${id}`); return runSql("DELETE FROM groups WHERE id = ?", [id]); });
   ipcMain.handle('db:toggleGroupStatus', (_, { id, status }) => runSql("UPDATE groups SET status = ? WHERE id = ?", [status, id]));
   
-  // Messages
   ipcMain.handle('db:getMessages', (_, groupId) => queryAll("SELECT * FROM messages WHERE group_id = ? ORDER BY time ASC", [groupId]));
   ipcMain.handle('db:addMessage', (_, { groupId, text, sent, sender, status }) => { try { db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [groupId, text, sent ? 1 : 0, sender || null, status || 'sent']); saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('db:clearMessages', (_, groupId) => { if (groupId) return runSql("DELETE FROM messages WHERE group_id = ?", [groupId]); else return runSql("DELETE FROM messages"); });
   
-  // Schedules
   ipcMain.handle('db:getSchedules', () => queryAll("SELECT s.*, g.name as group_name, g.chat_id, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id ORDER BY s.id"));
   ipcMain.handle('db:getScheduleLogs', (_, scheduleId) => queryAll("SELECT * FROM schedule_logs WHERE schedule_id = ? ORDER BY executed_at DESC LIMIT 50", [scheduleId]));
   ipcMain.handle('db:addSchedule', (_, { name, text, groupId, botId, scheduledTime, repeatType }) => { try { db.run("INSERT INTO schedules (name, text, group_id, bot_id, scheduled_time, repeat_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)", [name, text, groupId, botId, scheduledTime, repeatType, 'active']); const lastId = queryOne("SELECT last_insert_rowid() as id"); AIMonitor.log('ADD_SCHEDULE', null, `Создано расписание: ${name}`, 'low'); logActivity(null, 'ADD_SCHEDULE', `Создано расписание ${name}`); saveDatabase(); return { success: true, id: lastId.id }; } catch (err) { return { success: false, error: err.message }; } });
@@ -171,13 +179,11 @@ function registerIPCHandlers() {
   ipcMain.handle('db:deleteSchedule', (_, id) => { logActivity(null, 'DELETE_SCHEDULE', `Удалено расписание ${id}`); return runSql("DELETE FROM schedules WHERE id = ?", [id]); });
   ipcMain.handle('db:toggleSchedule', (_, { id, status }) => runSql("UPDATE schedules SET status = ? WHERE id = ?", [status, id]));
   
-  // Templates
   ipcMain.handle('db:getTemplates', () => queryAll("SELECT * FROM templates ORDER BY id"));
   ipcMain.handle('db:addTemplate', (_, { name, content }) => { try { db.run("INSERT INTO templates (name, content) VALUES (?, ?)", [name, content]); saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('db:updateTemplate', (_, { id, name, content }) => runSql("UPDATE templates SET name = ?, content = ? WHERE id = ?", [name, content, id]));
   ipcMain.handle('db:deleteTemplate', (_, id) => runSql("DELETE FROM templates WHERE id = ?", [id]));
   
-  // Stats - enhanced
   ipcMain.handle('db:getStats', () => {
     const today = new Date().toISOString().split('T')[0];
     const messagesToday = queryAll("SELECT COUNT(*) as c FROM messages WHERE date(time) = ?", [today])[0]?.c || 0;
@@ -201,13 +207,11 @@ function registerIPCHandlers() {
     };
   });
   
-  // Notifications
   ipcMain.handle('notifications:send', (_, { userId, fromId, text, type }) => runSql("INSERT INTO notifications (user_id, from_id, text, type) VALUES (?, ?, ?, ?)", [userId, fromId, text, type || 'message']));
   ipcMain.handle('notifications:get', (_, userId) => queryAll("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50", [userId]));
   ipcMain.handle('notifications:markRead', (_, id) => runSql("UPDATE notifications SET read = 1 WHERE id = ?", [id]));
   ipcMain.handle('notifications:getUnreadCount', (_, userId) => ({ count: queryAll("SELECT COUNT(*) as c FROM notifications WHERE user_id = ? AND read = 0", [userId])[0]?.c || 0 }));
   
-  // Telegram
   ipcMain.on('tg:sync-config', async () => { const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"); const groups = queryAll("SELECT * FROM groups WHERE status = 'active'"); syncPolling(bots, groups); });
   ipcMain.handle('tg:send', async (_, { token, chatId, text, topicIds }) => { 
     try { 
@@ -225,7 +229,6 @@ function registerIPCHandlers() {
     } catch (err) { return { ok: false, description: err.message }; } 
   });
   
-  // Multi-send to multiple groups
   ipcMain.handle('tg:sendMulti', async (_, { groupIds, text }) => {
     const results = [];
     for (const groupId of groupIds) {
@@ -248,26 +251,227 @@ function registerIPCHandlers() {
   console.log('IPC handlers registered');
 }
 
-autoUpdater.autoDownload = true; autoUpdater.autoInstallOnAppQuit = true;
-app.whenReady().then(async () => { db = await initDatabase(); registerIPCHandlers(); createWindow(); await createTray(); setupAutoUpdater(); startScheduleChecker(); const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"); const groups = queryAll("SELECT * FROM groups WHERE status = 'active'"); syncPolling(bots, groups); });
-
-function createWindow() { win = new BrowserWindow({ width: 1400, height: 900, title: 'HubPro v' + VERSION, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false }, show: false }); win.loadFile('renderer/index.html'); win.once('ready-to-show', () => win.show()); win.on('close', (e) => { if (!app.isQuitting) { e.preventDefault(); win.hide(); } }); }
-
-async function createTray() {
-  const buildDir = path.join(__dirname, 'build'); if (!fs.existsSync(buildDir)) fs.mkdirSync(buildDir, { recursive: true });
-  const iconPath = path.join(buildDir, 'icon.png');
-  if (!fs.existsSync(iconPath)) fs.writeFileSync(iconPath, Buffer.from([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,0x00,0x00,0x00,0x0D,0x49,0x48,0x44,0x52,0x00,0x00,0x00,0x10,0x00,0x00,0x00,0x10,0x08,0x06,0x00,0x00,0x00,0x1F,0xF3,0xFF,0x61,0x00,0x00,0x00,0x01,0x73,0x52,0x47,0x42,0x00,0xAE,0xCE,0x1C,0xE9,0x00,0x00,0x00,0x3D,0x49,0x44,0x41,0x54,0x38,0x4F,0x63,0x64,0x60,0x18,0x05,0xA3,0x00,0x31,0x80,0x98,0x98,0x98,0x98,0x18,0x05,0xA3,0x00,0x31,0x80,0x98,0x98,0x98,0x98,0x18,0x05,0xA3,0x00,0x31,0x80,0x98,0x98,0x98,0x98,0x18,0x05,0xA3,0x00,0x31,0x80,0x98,0x98,0x98,0x98,0x18,0x05,0xA3,0x00,0x00,0x0A,0x3F,0x04,0x1C,0xB8,0xD1,0x3E,0x00,0x00,0x00,0x00,0x49,0x45,0x4E,0x44,0xAE,0x42,0x60,0x82]));
-  tray = new Tray(nativeImage.createFromPath(iconPath).isEmpty() ? nativeImage.createEmpty() : nativeImage.createFromPath(iconPath));
-  tray.setToolTip('HubPro v' + VERSION); tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Открыть HubPro', click: () => { win.show(); win.focus(); } }, { type: 'separator' }, { label: 'Закрыть', click: () => { app.isQuitting = true; app.quit(); } }]));
-  tray.on('double-click', () => { win.show(); win.focus(); });
+// Проверка всех расписаний
+function checkAllSchedules() {
+  try {
+    const now = new Date();
+    const ct = now.toTimeString().slice(0, 5);
+    const cd = now.toISOString().split('T')[0];
+    const schedules = queryAll("SELECT * FROM schedules WHERE status = 'active'");
+    let executed = 0;
+    for (const s of schedules) {
+      if (checkScheduleTime(s, ct, cd, now)) {
+        executeSchedule(s);
+        executed++;
+      }
+    }
+    if (executed > 0) {
+      console.log(`Выполнено расписаний: ${executed}`);
+    }
+    return { success: true, executed };
+  } catch (e) {
+    console.error('Ошибка проверки расписания:', e);
+    return { success: false, error: e.message };
+  }
 }
 
-function syncPolling(bots, groups) { Object.values(pollingIntervals).forEach(clearInterval); pollingIntervals = {}; botOffsets = {}; bots.forEach(bot => { const token = decrypt(bot.token); botOffsets[bot.id] = 0; const poll = async () => { try { const c = new AbortController(); const t = setTimeout(() => c.abort(), 10000); const data = await (await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${botOffsets[bot.id]}&timeout=10`, { signal: c.signal })).json(); clearTimeout(t); if (data.ok && data.result) data.result.forEach(u => { botOffsets[bot.id] = u.update_id + 1; if (u.message?.message?.text) { const g = groups.find(g => g.bot_id === bot.id && g.chat_id === u.message.chat.id.toString()); if (g) { db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [g.id, u.message.text, 0, u.message.from.first_name || u.message.from.username, 'received']); win.webContents.send('tg:incoming', { groupId: g.id, text: u.message.text, time: u.message.date * 1000, sender: u.message.from.first_name || u.message.from.username }); } } }); } catch (e) { if (e.name !== 'AbortError') console.log('Poll', bot.id, e.message); } }; pollingIntervals[bot.id] = setInterval(poll, 3000); }); saveDatabase(); }
+autoUpdater.autoDownload = true; autoUpdater.autoInstallOnAppQuit = true;
+app.whenReady().then(async () => { 
+  db = await initDatabase(); 
+  registerIPCHandlers(); 
+  createWindow(); 
+  await createTray(); 
+  setupAutoUpdater(); 
+  startScheduleChecker(); 
+  
+  // Проверяем расписание при запуске
+  checkAllSchedules();
+  
+  const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"); 
+  const groups = queryAll("SELECT * FROM groups WHERE status = 'active'"); 
+  syncPolling(bots, groups); 
+});
 
-function startScheduleChecker() { scheduleIntervals.forEach(id => clearInterval(id)); scheduleIntervals = []; const id = setInterval(async () => { try { const now = new Date(), ct = now.toTimeString().slice(0, 5), cd = now.toISOString().split('T')[0]; for (const s of queryAll("SELECT * FROM schedules WHERE status = 'active'")) { if (checkScheduleTime(s, ct, cd, now)) await executeSchedule(s); } } catch (e) { console.error(e); } }, 1000); scheduleIntervals.push(id); }
-function checkScheduleTime(s, ct, cd, now) { if (ct !== s.scheduled_time.slice(0, 5)) return false; if (s.repeat_type === 'once') return s.scheduled_time.startsWith(cd); const le = s.last_executed ? new Date(s.last_executed) : null; switch (s.repeat_type) { case 'daily': return !le || le.toDateString() !== now.toDateString(); case 'weekly': return !le || Math.floor((now - le) / 86400000) >= 7; case 'monthly': return !le || le.getMonth() !== now.getMonth(); default: return false; } }
+function createWindow() { 
+  win = new BrowserWindow({ 
+    width: 1400, 
+    height: 900, 
+    title: 'HubPro v' + VERSION, 
+    webPreferences: { 
+      preload: path.join(__dirname, 'preload.js'), 
+      contextIsolation: true, 
+      nodeIntegration: false 
+    }, 
+    show: false 
+  }); 
+  win.loadFile('renderer/index.html'); 
+  win.once('ready-to-show', () => win.show()); 
+  
+  // Скрываем в трей вместо закрытия
+  win.on('close', (event) => {
+    if (!app.isQuitting) {
+      event.preventDefault();
+      win.hide();
+      showNotification('HubPro', 'Приложение свёрнуто в трей');
+    }
+  });
+}
 
-async function executeSchedule(s) { try { const bot = queryOne("SELECT * FROM bots WHERE id = ?", [s.bot_id]); const group = queryOne("SELECT * FROM groups WHERE id = ?", [s.group_id]); if (!bot || !group) return; const res = await (await fetch(`https://api.telegram.org/bot${decrypt(bot.token)}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: group.chat_id, text: s.text, parse_mode: 'HTML' }) })).json(); if (res.ok) { db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'success', null]); db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [group.id, s.text, 1, 'HubPro (авто)', 'sent']); db.run("UPDATE schedules SET last_executed = ? WHERE id = ?", [new Date().toISOString(), s.id]); win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: true, message: 'Сообщение отправлено' }); } else { db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'error', res.description]); db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [group.id, s.text, 0, 'HubPro (авто)', 'failed']); win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: false, error: res.description }); } } catch (e) { db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'error', e.message]); win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: false, error: e.message }); } saveDatabase(); }
+async function createTray() {
+  const buildDir = path.join(__dirname, 'build'); 
+  if (!fs.existsSync(buildDir)) fs.mkdirSync(buildDir, { recursive: true });
+  const iconPath = path.join(buildDir, 'icon.png');
+  if (!fs.existsSync(iconPath)) fs.writeFileSync(iconPath, Buffer.from([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,0x00,0x00,0x00,0x0D,0x49,0x48,0x44,0x52,0x00,0x00,0x00,0x10,0x00,0x00,0x00,0x10,0x08,0x06,0x00,0x00,0x00,0x1F,0xF3,0xFF,0x61,0x00,0x00,0x00,0x01,0x73,0x52,0x47,0x42,0x00,0xAE,0xCE,0x1C,0xE9,0x00,0x00,0x00,0x3D,0x49,0x44,0x41,0x54,0x38,0x4F,0x63,0x64,0x60,0x18,0x05,0xA3,0x00,0x31,0x80,0x98,0x98,0x98,0x98,0x18,0x05,0xA3,0x00,0x31,0x80,0x98,0x98,0x98,0x98,0x18,0x05,0xA3,0x00,0x31,0x80,0x98,0x98,0x98,0x98,0x18,0x05,0xA3,0x00,0x31,0x80,0x98,0x98,0x98,0x98,0x18,0x05,0xA3,0x00,0x00,0x0A,0x3F,0x04,0x1C,0xB8,0xD1,0x3E,0x00,0x00,0x00,0x00,0x49,0x45,0x4E,0x44,0xAE,0x42,0x60,0x82]));
+  
+  tray = new Tray(nativeImage.createFromPath(iconPath).isEmpty() ? nativeImage.createEmpty() : nativeImage.createFromPath(iconPath));
+  tray.setToolTip('HubPro v' + VERSION);
+  
+  const contextMenu = Menu.buildFromTemplate([
+    { 
+      label: '📱 Открыть HubPro', 
+      click: () => {
+        win.show();
+        win.focus();
+      } 
+    },
+    { type: 'separator' },
+    { 
+      label: '📊 Проверить расписание', 
+      click: () => {
+        const result = checkAllSchedules();
+        showNotification('HubPro', result.success ? `Проверка завершена` : 'Ошибка проверки');
+      } 
+    },
+    { 
+      label: '🔄 Перезапустить polling', 
+      click: () => {
+        const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'");
+        const groups = queryAll("SELECT * FROM groups WHERE status = 'active'");
+        syncPolling(bots, groups);
+        showNotification('HubPro', 'Polling перезапущен');
+      }
+    },
+    { type: 'separator' },
+    { 
+      label: '❌ Выход', 
+      click: () => {
+        app.isQuitting = true;
+        app.quit();
+      } 
+    }
+  ]);
+  
+  tray.setContextMenu(contextMenu);
+  tray.on('double-click', () => {
+    win.show();
+    win.focus();
+  });
+  
+  // Показываем уведомление о запуске
+  showNotification('HubPro', 'Приложение запущено и работает в фоне');
+}
 
-function setupAutoUpdater() { autoUpdater.on('update-available', (i) => { if (win?.webContents) win.webContents.send('update-available', i); }); autoUpdater.on('update-downloaded', (i) => { if (win?.webContents) win.webContents.send('update-downloaded', i); dialog.showMessageBox(win, { type: 'info', title: 'Обновление', message: `Загружена версия ${i.version}. Перезапустить?`, buttons: ['Да', 'Нет'] }).then(r => { if (r.response === 0) autoUpdater.quitAndInstall(); }); }); autoUpdater.on('error', e => console.error(e)); if (app.isPackaged) autoUpdater.checkForUpdatesAndNotify(); }
-app.on('window-all-closed', () => process.platform !== 'darwin' && app.quit()); app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow()); app.on('before-quit', () => { scheduleIntervals.forEach(id => clearInterval(id)); if (db) { saveDatabase(); db.close(); } });
+function syncPolling(bots, groups) { 
+  Object.values(pollingIntervals).forEach(clearInterval); 
+  pollingIntervals = {}; 
+  botOffsets = {}; 
+  bots.forEach(bot => { 
+    const token = decrypt(bot.token); 
+    botOffsets[bot.id] = 0; 
+    const poll = async () => { 
+      try { 
+        const c = new AbortController(); 
+        const t = setTimeout(() => c.abort(), 10000); 
+        const data = await (await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${botOffsets[bot.id]}&timeout=10`, { signal: c.signal })).json(); 
+        clearTimeout(t); 
+        if (data.ok && data.result) data.result.forEach(u => { 
+          botOffsets[bot.id] = u.update_id + 1; 
+          if (u.message?.message?.text) { 
+            const g = groups.find(g => g.bot_id === bot.id && g.chat_id === u.message.chat.id.toString()); 
+            if (g) { 
+              db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [g.id, u.message.text, 0, u.message.from.first_name || u.message.from.username, 'received']); 
+              win.webContents.send('tg:incoming', { groupId: g.id, text: u.message.text, time: u.message.date * 1000, sender: u.message.from.first_name || u.message.from.username }); 
+            } 
+          } 
+        }); 
+      } catch (e) { 
+        if (e.name !== 'AbortError') console.log('Poll', bot.id, e.message); 
+      } 
+    }; 
+    pollingIntervals[bot.id] = setInterval(poll, 3000); 
+  }); 
+  saveDatabase(); 
+}
+
+function startScheduleChecker() { 
+  scheduleIntervals.forEach(id => clearInterval(id)); 
+  scheduleIntervals = []; 
+  
+  // Проверяем каждую секунду
+  const id = setInterval(() => {
+    checkAllSchedules();
+  }, 1000);
+  
+  scheduleIntervals.push(id); 
+}
+
+function checkScheduleTime(s, ct, cd, now) { 
+  if (ct !== s.scheduled_time.slice(0, 5)) return false; 
+  if (s.repeat_type === 'once') return s.scheduled_time.startsWith(cd); 
+  const le = s.last_executed ? new Date(s.last_executed) : null; 
+  switch (s.repeat_type) { 
+    case 'daily': return !le || le.toDateString() !== now.toDateString(); 
+    case 'weekly': return !le || Math.floor((now - le) / 86400000) >= 7; 
+    case 'monthly': return !le || le.getMonth() !== now.getMonth(); 
+    default: return false; 
+  } 
+}
+
+async function executeSchedule(s) { 
+  try { 
+    const bot = queryOne("SELECT * FROM bots WHERE id = ?", [s.bot_id]); 
+    const group = queryOne("SELECT * FROM groups WHERE id = ?", [s.group_id]); 
+    if (!bot || !group) return; 
+    const res = await (await fetch(`https://api.telegram.org/bot${decrypt(bot.token)}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: group.chat_id, text: s.text, parse_mode: 'HTML' }) })).json(); 
+    if (res.ok) { 
+      db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'success', null]); 
+      db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [group.id, s.text, 1, 'HubPro (авто)', 'sent']); 
+      db.run("UPDATE schedules SET last_executed = ? WHERE id = ?", [new Date().toISOString(), s.id]); 
+      win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: true, message: 'Сообщение отправлено' }); 
+      showNotification('HubPro', `Расписание "${s.name}" выполнено`);
+    } else { 
+      db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'error', res.description]); 
+      db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [group.id, s.text, 0, 'HubPro (авто)', 'failed']); 
+      win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: false, error: res.description }); 
+      showNotification('HubPro', `Ошибка расписания "${s.name}": ${res.description}`);
+    } 
+  } catch (e) { 
+    db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'error', e.message]); 
+    win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: false, error: e.message }); 
+    showNotification('HubPro', `Ошибка: ${e.message}`);
+  } 
+  saveDatabase(); 
+}
+
+function setupAutoUpdater() { 
+  autoUpdater.on('update-available', (i) => { 
+    if (win?.webContents) win.webContents.send('update-available', i); 
+    showNotification('HubPro', `Доступно обновление v${i.version}`);
+  }); 
+  autoUpdater.on('update-downloaded', (i) => { 
+    if (win?.webContents) win.webContents.send('update-downloaded', i); 
+    dialog.showMessageBox(win, { type: 'info', title: 'Обновление', message: `Загружена версия ${i.version}. Перезапустить?`, buttons: ['Да', 'Нет'] }).then(r => { if (r.response === 0) autoUpdater.quitAndInstall(); }); 
+  }); 
+  autoUpdater.on('error', e => console.error(e)); 
+  if (app.isPackaged) autoUpdater.checkForUpdatesAndNotify(); 
+}
+
+app.on('window-all-closed', () => {
+  // Не закрываем приложение - оно работает в трее
+}); 
+app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow()); 
+app.on('before-quit', () => { 
+  app.isQuitting = true; 
+  scheduleIntervals.forEach(id => clearInterval(id)); 
+  if (db) { saveDatabase(); db.close(); } 
+});
