@@ -5,14 +5,15 @@ const fs = require('fs');
 const crypto = require('crypto');
 const http = require('http');
 
-const VERSION = '1.8.0';
+const VERSION = '1.8.1';
 const UPDATE_INFO = [
-  { version: '1.8.0', date: '2026-04-20', changes: ['Исправлено расписание', 'Webhook вместо Polling', 'Улучшенная обработка'] },
-  { version: '1.7.0', date: '2026-04-20', changes: ['Системный трей', 'Уведомления'] }
+  { version: '1.8.1', date: '2026-04-20', changes: ['Исправлен конфликт порта', 'Webhook на другом порту'] },
+  { version: '1.8.0', date: '2026-04-20', changes: ['Исправлено расписание', 'Webhook'] }
 ];
 
 let win, tray, pollingIntervals = {}, botOffsets = {}, db, scheduleIntervals = [], SQL;
 let webhookServer = null;
+const WEBHOOK_PORT = 3001; // Изменённый порт
 
 const ENCRYPTION_KEY = crypto.scryptSync(app.getPath('userData'), 'hubpro-salt', 32);
 const IV_LENGTH = 16;
@@ -127,8 +128,8 @@ function queryOne(sql, params = []) { const r = queryAll(sql, params); return r.
 function runSql(sql, params = []) { try { db.run(sql, params); saveDatabase(); return { success: true }; } catch(e) { return { success: false, error: e.message }; } }
 function logActivity(userId, action, details) { db.run("INSERT INTO activity_log (user_id, action, details) VALUES (?, ?, ?)", [userId, action, details || null]); saveDatabase(); }
 
-// Запуск webhook сервера
-function startWebhookServer(port = 3000) {
+// Запуск webhook сервера на порту 3001
+function startWebhookServer(port = 3001) {
   if (webhookServer) return;
   
   webhookServer = http.createServer(async (req, res) => {
@@ -140,7 +141,6 @@ function startWebhookServer(port = 3000) {
           const token = req.url.split('/webhook/')[1];
           const update = JSON.parse(body);
           
-          // Обработка обновления
           if (update.message) {
             const bot = queryOne("SELECT id FROM bots WHERE token LIKE ?", ['%' + token]);
             if (bot) {
@@ -174,9 +174,16 @@ function startWebhookServer(port = 3000) {
     }
   });
   
+  webhookServer.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.log(`Порт ${port} занят, webhook сервер не запущен`);
+      webhookServer = null;
+    }
+  });
+  
   webhookServer.listen(port, () => {
     console.log(`Webhook server started on port ${port}`);
-    showNotification('HubPro', `Webhook сервер запущен на порту ${port}`);
+    showNotification('HubPro', `Webhook на порту ${port}`);
   });
 }
 
@@ -184,7 +191,7 @@ function registerIPCHandlers() {
   ipcMain.handle('app:getVersion', () => ({ version: VERSION, updates: UPDATE_INFO }));
   ipcMain.handle('app:getPermissions', (_, role) => ({ permissions: ROLE_PERMISSIONS[role] || ROLE_PERMISSIONS.user }));
   ipcMain.handle('app:checkSchedule', () => checkAllSchedules());
-  ipcMain.handle('app:getWebhookPort', () => ({ port: 3000 }));
+  ipcMain.handle('app:getWebhookPort', () => ({ port: WEBHOOK_PORT }));
   
   ipcMain.handle('data:export', async () => { try { return { success: true, data: { bots: queryAll("SELECT id, name, token, online, status, created_at FROM bots").map(b => ({...b, token: decrypt(b.token)})), groups: queryAll("SELECT g.id, g.name, g.chat_id, g.bot_id, g.topic_ids, g.status, g.created_at, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id"), schedules: queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id"), users: queryAll("SELECT id, login, role, status, created_at FROM users"), templates: queryAll("SELECT * FROM templates") } }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('data:import', async (_, { bots, groups, schedules, users, templates }) => { try { if (bots) for (const b of bots) if (b.name && b.token) try { db.run("INSERT OR IGNORE INTO bots (name, token, online, status) VALUES (?, ?, ?, ?)", [b.name, encrypt(b.token), b.online ? 1 : 0, b.status || 'active']); } catch(e) {} if (groups) for (const g of groups) if (g.name && g.chat_id && g.bot_id) try { db.run("INSERT OR IGNORE INTO groups (name, chat_id, bot_id, topic_ids, status) VALUES (?, ?, ?, ?, ?)", [g.name, g.chat_id, g.bot_id, g.topic_ids || null, g.status || 'active']); } catch(e) {} if (schedules) for (const s of schedules) if (s.name && s.text && s.group_id && s.bot_id) try { db.run("INSERT OR IGNORE INTO schedules (name, text, group_id, bot_id, scheduled_time, repeat_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)", [s.name, s.text, s.group_id, s.bot_id, s.scheduled_time, s.repeat_type || 'once', s.status || 'active']); } catch(e) {} if (templates) for (const t of templates) if (t.name && t.content) try { db.run("INSERT OR IGNORE INTO templates (name, content) VALUES (?, ?)", [t.name, t.content]); } catch(e) {} saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
@@ -304,7 +311,6 @@ function registerIPCHandlers() {
   console.log('IPC handlers registered');
 }
 
-// Проверка расписания - ИСПРАВЛЕННАЯ ВЕРСИЯ
 function checkAllSchedules() {
   try {
     const now = new Date();
@@ -317,25 +323,20 @@ function checkAllSchedules() {
     let executed = 0;
     
     for (const s of schedules) {
-      // Получаем время из scheduled_time
       let scheduleTime = s.scheduled_time;
-      if (scheduleTime.includes('T')) {
+      if (scheduleTime && scheduleTime.includes('T')) {
         scheduleTime = scheduleTime.split('T')[1].substring(0, 5);
       }
       
-      // Проверяем совпадение времени
       if (scheduleTime === currentTime) {
-        // Для однократных - проверяем дату
         if (s.repeat_type === 'once') {
-          if (s.scheduled_time.startsWith(currentDate)) {
-            // Проверяем, не выполнялось ли уже
+          if (s.scheduled_time && s.scheduled_time.startsWith(currentDate)) {
             if (!s.last_executed || s.last_executed === null) {
               executeSchedule(s);
               executed++;
             }
           }
         } else {
-          // Для повторяющихся - проверяем last_executed
           if (!s.last_executed) {
             executeSchedule(s);
             executed++;
@@ -345,8 +346,8 @@ function checkAllSchedules() {
             const diffMins = Math.floor(diffMs / 60000);
             
             let shouldExecute = false;
-            if (s.repeat_type === 'daily' && diffMins >= 1440) shouldExecute = true; // 24 часа
-            if (s.repeat_type === 'weekly' && diffMins >= 10080) shouldExecute = true; // 7 дней
+            if (s.repeat_type === 'daily' && diffMins >= 1440) shouldExecute = true;
+            if (s.repeat_type === 'weekly' && diffMins >= 10080) shouldExecute = true;
             if (s.repeat_type === 'monthly') {
               const lastMonth = lastExec.getMonth();
               if (lastMonth !== now.getMonth()) shouldExecute = true;
@@ -418,7 +419,7 @@ app.whenReady().then(async () => {
   await createTray(); 
   setupAutoUpdater(); 
   startScheduleChecker(); 
-  startWebhookServer(3000);
+  startWebhookServer(WEBHOOK_PORT);
   checkAllSchedules();
   
   const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"); 
