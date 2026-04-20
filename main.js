@@ -4,10 +4,10 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
-const VERSION = '1.5.2';
+const VERSION = '1.6.0';
 const UPDATE_INFO = [
-  { version: '1.5.2', date: '2026-04-18', changes: ['Исправлена ошибка токена', 'Добавлен выбор бота в группе', 'Улучшена отправка сообщений'] },
-  { version: '1.5.1', date: '2026-04-18', changes: ['Полный аудит', 'AI мониторинг'] }
+  { version: '1.6.0', date: '2026-04-18', changes: ['Улучшенный Дашборд с графиками', 'Шаблоны сообщений', 'Мультичат', 'Улучшенный визуал'] },
+  { version: '1.5.2', date: '2026-04-18', changes: ['Исправлена ошибка токена', 'Выбор бота в группе'] }
 ];
 
 let win, tray, pollingIntervals = {}, botOffsets = {}, db, scheduleIntervals = [], SQL;
@@ -47,7 +47,7 @@ function decrypt(text) { if (!text || !text.includes(':')) return text; try { co
 function hashPassword(password) { return crypto.createHash('sha256').update(password).digest('hex'); }
 
 const ROLE_PERMISSIONS = {
-  admin: { tabs: ['dashboard', 'bots', 'groups', 'chat', 'schedule', 'users', 'notifications', 'activity', 'ai_monitor', 'settings'] },
+  admin: { tabs: ['dashboard', 'bots', 'groups', 'chat', 'schedule', 'users', 'notifications', 'activity', 'ai_monitor', 'settings', 'templates'] },
   helper: { tabs: ['users', 'notifications', 'settings'] },
   user: { tabs: ['dashboard', 'chat', 'notifications', 'settings'] }
 };
@@ -80,6 +80,9 @@ async function initDatabase() {
   if (!tableNames.includes('notifications')) db.run(`CREATE TABLE notifications (id INTEGER PRIMARY KEY, user_id INTEGER, from_id INTEGER, text TEXT, read INTEGER DEFAULT 0, type TEXT DEFAULT 'message', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   if (!tableNames.includes('settings')) db.run(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)`);
   if (!tableNames.includes('activity_log')) db.run(`CREATE TABLE activity_log (id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+  
+  // Templates table
+  if (!tableNames.includes('templates')) db.run(`CREATE TABLE templates (id INTEGER PRIMARY KEY, name TEXT, content TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   
   const admin = queryOne("SELECT id FROM users WHERE login = 'NeuralAP'");
   if (!admin) db.run("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", ['NeuralAP', hashPassword('0901Admin'), 'admin', 'active']);
@@ -117,8 +120,8 @@ function registerIPCHandlers() {
   ipcMain.handle('app:getVersion', () => ({ version: VERSION, updates: UPDATE_INFO }));
   ipcMain.handle('app:getPermissions', (_, role) => ({ permissions: ROLE_PERMISSIONS[role] || ROLE_PERMISSIONS.user }));
   
-  ipcMain.handle('data:export', async () => { try { return { success: true, data: { bots: queryAll("SELECT id, name, token, online, status, created_at FROM bots").map(b => ({...b, token: decrypt(b.token)})), groups: queryAll("SELECT g.id, g.name, g.chat_id, g.bot_id, g.topic_ids, g.status, g.created_at, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id"), schedules: queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id"), users: queryAll("SELECT id, login, role, status, created_at FROM users") } }; } catch (err) { return { success: false, error: err.message }; } });
-  ipcMain.handle('data:import', async (_, { bots, groups, schedules, users }) => { try { if (bots) for (const b of bots) if (b.name && b.token) try { db.run("INSERT OR IGNORE INTO bots (name, token, online, status) VALUES (?, ?, ?, ?)", [b.name, encrypt(b.token), b.online ? 1 : 0, b.status || 'active']); } catch(e) {} if (groups) for (const g of groups) if (g.name && g.chat_id && g.bot_id) try { db.run("INSERT OR IGNORE INTO groups (name, chat_id, bot_id, topic_ids, status) VALUES (?, ?, ?, ?, ?)", [g.name, g.chat_id, g.bot_id, g.topic_ids || null, g.status || 'active']); } catch(e) {} if (schedules) for (const s of schedules) if (s.name && s.text && s.group_id && s.bot_id) try { db.run("INSERT OR IGNORE INTO schedules (name, text, group_id, bot_id, scheduled_time, repeat_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)", [s.name, s.text, s.group_id, s.bot_id, s.scheduled_time, s.repeat_type || 'once', s.status || 'active']); } catch(e) {} saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
+  ipcMain.handle('data:export', async () => { try { return { success: true, data: { bots: queryAll("SELECT id, name, token, online, status, created_at FROM bots").map(b => ({...b, token: decrypt(b.token)})), groups: queryAll("SELECT g.id, g.name, g.chat_id, g.bot_id, g.topic_ids, g.status, g.created_at, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id"), schedules: queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id"), users: queryAll("SELECT id, login, role, status, created_at FROM users"), templates: queryAll("SELECT * FROM templates") } }; } catch (err) { return { success: false, error: err.message }; } });
+  ipcMain.handle('data:import', async (_, { bots, groups, schedules, users, templates }) => { try { if (bots) for (const b of bots) if (b.name && b.token) try { db.run("INSERT OR IGNORE INTO bots (name, token, online, status) VALUES (?, ?, ?, ?)", [b.name, encrypt(b.token), b.online ? 1 : 0, b.status || 'active']); } catch(e) {} if (groups) for (const g of groups) if (g.name && g.chat_id && g.bot_id) try { db.run("INSERT OR IGNORE INTO groups (name, chat_id, bot_id, topic_ids, status) VALUES (?, ?, ?, ?, ?)", [g.name, g.chat_id, g.bot_id, g.topic_ids || null, g.status || 'active']); } catch(e) {} if (schedules) for (const s of schedules) if (s.name && s.text && s.group_id && s.bot_id) try { db.run("INSERT OR IGNORE INTO schedules (name, text, group_id, bot_id, scheduled_time, repeat_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)", [s.name, s.text, s.group_id, s.bot_id, s.scheduled_time, s.repeat_type || 'once', s.status || 'active']); } catch(e) {} if (templates) for (const t of templates) if (t.name && t.content) try { db.run("INSERT OR IGNORE INTO templates (name, content) VALUES (?, ?)", [t.name, t.content]); } catch(e) {} saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
   
   ipcMain.handle('auth:login', (_, { login, password }) => { 
     const user = queryOne("SELECT * FROM users WHERE login = ?", [login]); 
@@ -141,7 +144,7 @@ function registerIPCHandlers() {
   ipcMain.handle('ai:getAlerts', () => AIMonitor.getAlerts());
   ipcMain.handle('auth:getActivityLog', () => queryAll("SELECT a.*, u.login FROM activity_log a LEFT JOIN users u ON a.user_id = u.id ORDER BY a.created_at DESC LIMIT 100"));
   
-  // Bots - возвращаем реальный токен для отправки
+  // Bots
   ipcMain.handle('db:getBots', () => queryAll("SELECT * FROM bots ORDER BY id").map(b => ({ ...b, token: decrypt(b.token) })));
   ipcMain.handle('db:addBot', (_, { name, token }) => { try { db.run("INSERT INTO bots (name, token, status) VALUES (?, ?, ?)", [name, encrypt(token), 'active']); const lastId = queryOne("SELECT last_insert_rowid() as id"); AIMonitor.log('ADD_BOT', null, `Добавлен бот: ${name}`, 'medium'); logActivity(null, 'ADD_BOT', `Добавлен бот ${name}`); saveDatabase(); return { success: true, id: lastId.id }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('db:updateBot', (_, { id, name, token, status }) => { if (token) return runSql("UPDATE bots SET name = ?, token = ?, status = ? WHERE id = ?", [name, encrypt(token), status || 'active', id]); else return runSql("UPDATE bots SET name = ?, status = ? WHERE id = ?", [name, status || 'active', id]); });
@@ -168,8 +171,35 @@ function registerIPCHandlers() {
   ipcMain.handle('db:deleteSchedule', (_, id) => { logActivity(null, 'DELETE_SCHEDULE', `Удалено расписание ${id}`); return runSql("DELETE FROM schedules WHERE id = ?", [id]); });
   ipcMain.handle('db:toggleSchedule', (_, { id, status }) => runSql("UPDATE schedules SET status = ? WHERE id = ?", [status, id]));
   
-  // Stats
-  ipcMain.handle('db:getStats', () => ({ botCount: queryAll("SELECT COUNT(*) as c FROM bots")[0]?.c || 0, activeBots: queryAll("SELECT COUNT(*) as c FROM bots WHERE status = 'active'")[0]?.c || 0, groupCount: queryAll("SELECT COUNT(*) as c FROM groups")[0]?.c || 0, activeGroups: queryAll("SELECT COUNT(*) as c FROM groups WHERE status = 'active'")[0]?.c || 0, messageCount: queryAll("SELECT COUNT(*) as c FROM messages")[0]?.c || 0, sentMessages: queryAll("SELECT COUNT(*) as c FROM messages WHERE sent = 1")[0]?.c || 0, receivedMessages: queryAll("SELECT COUNT(*) as c FROM messages WHERE sent = 0")[0]?.c || 0, failedMessages: queryAll("SELECT COUNT(*) as c FROM messages WHERE status = 'failed'")[0]?.c || 0, scheduleCount: queryAll("SELECT COUNT(*) as c FROM schedules")[0]?.c || 0, activeSchedules: queryAll("SELECT COUNT(*) as c FROM schedules WHERE status = 'active'")[0]?.c || 0, userCount: queryAll("SELECT COUNT(*) as c FROM users")[0]?.c || 0, activeUsers: queryAll("SELECT COUNT(*) as c FROM users WHERE status = 'active'")[0]?.c || 0 }));
+  // Templates
+  ipcMain.handle('db:getTemplates', () => queryAll("SELECT * FROM templates ORDER BY id"));
+  ipcMain.handle('db:addTemplate', (_, { name, content }) => { try { db.run("INSERT INTO templates (name, content) VALUES (?, ?)", [name, content]); saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
+  ipcMain.handle('db:updateTemplate', (_, { id, name, content }) => runSql("UPDATE templates SET name = ?, content = ? WHERE id = ?", [name, content, id]));
+  ipcMain.handle('db:deleteTemplate', (_, id) => runSql("DELETE FROM templates WHERE id = ?", [id]));
+  
+  // Stats - enhanced
+  ipcMain.handle('db:getStats', () => {
+    const today = new Date().toISOString().split('T')[0];
+    const messagesToday = queryAll("SELECT COUNT(*) as c FROM messages WHERE date(time) = ?", [today])[0]?.c || 0;
+    const messagesWeek = queryAll("SELECT COUNT(*) as c FROM messages WHERE datetime(time) >= datetime('now', '-7 days')")[0]?.c || 0;
+    return {
+      botCount: queryAll("SELECT COUNT(*) as c FROM bots")[0]?.c || 0,
+      activeBots: queryAll("SELECT COUNT(*) as c FROM bots WHERE status = 'active'")[0]?.c || 0,
+      groupCount: queryAll("SELECT COUNT(*) as c FROM groups")[0]?.c || 0,
+      activeGroups: queryAll("SELECT COUNT(*) as c FROM groups WHERE status = 'active'")[0]?.c || 0,
+      messageCount: queryAll("SELECT COUNT(*) as c FROM messages")[0]?.c || 0,
+      messagesToday,
+      messagesWeek,
+      sentMessages: queryAll("SELECT COUNT(*) as c FROM messages WHERE sent = 1")[0]?.c || 0,
+      receivedMessages: queryAll("SELECT COUNT(*) as c FROM messages WHERE sent = 0")[0]?.c || 0,
+      failedMessages: queryAll("SELECT COUNT(*) as c FROM messages WHERE status = 'failed'")[0]?.c || 0,
+      scheduleCount: queryAll("SELECT COUNT(*) as c FROM schedules")[0]?.c || 0,
+      activeSchedules: queryAll("SELECT COUNT(*) as c FROM schedules WHERE status = 'active'")[0]?.c || 0,
+      userCount: queryAll("SELECT COUNT(*) as c FROM users")[0]?.c || 0,
+      activeUsers: queryAll("SELECT COUNT(*) as c FROM users WHERE status = 'active'")[0]?.c || 0,
+      templateCount: queryAll("SELECT COUNT(*) as c FROM templates")[0]?.c || 0
+    };
+  });
   
   // Notifications
   ipcMain.handle('notifications:send', (_, { userId, fromId, text, type }) => runSql("INSERT INTO notifications (user_id, from_id, text, type) VALUES (?, ?, ?, ?)", [userId, fromId, text, type || 'message']));
@@ -181,13 +211,10 @@ function registerIPCHandlers() {
   ipcMain.on('tg:sync-config', async () => { const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"); const groups = queryAll("SELECT * FROM groups WHERE status = 'active'"); syncPolling(bots, groups); });
   ipcMain.handle('tg:send', async (_, { token, chatId, text, topicIds }) => { 
     try { 
-      // Проверяем токен
       const me = await (await fetch(`https://api.telegram.org/bot${token}/getMe`)).json(); 
       if (!me.ok) return { ok: false, description: 'Неверный токен: ' + (me.description || 'ошибка API') }; 
-      
       const chat = await (await fetch(`https://api.telegram.org/bot${token}/getChat?chat_id=${chatId}`)).json(); 
       if (!chat.ok) return { ok: false, description: 'Бот не в группе или неверный Chat ID' }; 
-      
       if (topicIds && Array.isArray(topicIds) && topicIds.length > 0) { 
         const results = []; 
         for (const tid of topicIds) results.push(await (await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text, message_thread_id: tid, parse_mode: 'HTML' }) })).json()); 
@@ -197,6 +224,24 @@ function registerIPCHandlers() {
       return await res.json(); 
     } catch (err) { return { ok: false, description: err.message }; } 
   });
+  
+  // Multi-send to multiple groups
+  ipcMain.handle('tg:sendMulti', async (_, { groupIds, text }) => {
+    const results = [];
+    for (const groupId of groupIds) {
+      const g = queryOne("SELECT g.*, b.token as bot_token FROM groups g LEFT JOIN bots b ON g.bot_id = b.id WHERE g.id = ?", [groupId]);
+      if (g && g.bot_token) {
+        try {
+          const res = await (await fetch(`https://api.telegram.org/bot${decrypt(g.bot_token)}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: g.chat_id, text, parse_mode: 'HTML' }) })).json();
+          results.push({ groupId, success: res.ok, error: res.description });
+        } catch (e) {
+          results.push({ groupId, success: false, error: e.message });
+        }
+      }
+    }
+    return { success: true, results };
+  });
+  
   ipcMain.handle('tg:checkBot', async (_, token) => { try { return await (await fetch(`https://api.telegram.org/bot${token}/getMe`)).json(); } catch (err) { return { ok: false, error: err.message }; } });
   ipcMain.handle('tg:getTopics', async (_, { token, chatId }) => { try { const data = await (await fetch(`https://api.telegram.org/bot${token}/getForumTopics?chat_id=${chatId}`)).json(); return data.ok ? { ok: true, topics: data.topics || [] } : { ok: false, error: data.description }; } catch (err) { return { ok: false, error: err.message }; } });
   
