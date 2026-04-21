@@ -5,15 +5,16 @@ const fs = require('fs');
 const crypto = require('crypto');
 const http = require('http');
 
-const VERSION = '1.8.2';
+const VERSION = '1.9.0';
 const UPDATE_INFO = [
-  { version: '1.8.2', date: '2026-04-20', changes: ['Исправлен UI после удаления', 'Принудительная перезагрузка данных'] },
-  { version: '1.8.1', date: '2026-04-20', changes: ['Исправлен конфликт порта'] }
+  { version: '1.9.0', date: '2026-04-20', changes: ['Исправлен UI баг', 'Редактирование расписания', 'Защита главного админа'] },
+  { version: '1.8.2', date: '2026-04-20', changes: ['Исправлен UI после удаления'] }
 ];
 
 let win, tray, pollingIntervals = {}, botOffsets = {}, db, scheduleIntervals = [], SQL;
 let webhookServer = null;
 const WEBHOOK_PORT = 3001;
+const MAIN_ADMIN_LOGIN = 'NeuralAP';
 
 const ENCRYPTION_KEY = crypto.scryptSync(app.getPath('userData'), 'hubpro-salt', 32);
 const IV_LENGTH = 16;
@@ -96,8 +97,8 @@ async function initDatabase() {
   if (!tableNames.includes('activity_log')) db.run(`CREATE TABLE activity_log (id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   if (!tableNames.includes('templates')) db.run(`CREATE TABLE templates (id INTEGER PRIMARY KEY, name TEXT, content TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   
-  const admin = queryOne("SELECT id FROM users WHERE login = 'NeuralAP'");
-  if (!admin) db.run("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", ['NeuralAP', hashPassword('0901Admin'), 'admin', 'active']);
+  const admin = queryOne("SELECT id FROM users WHERE login = ?", [MAIN_ADMIN_LOGIN]);
+  if (!admin) db.run("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", [MAIN_ADMIN_LOGIN, hashPassword('0901Admin'), 'admin', 'active']);
   
   const help = queryOne("SELECT id FROM users WHERE login = 'HelpNeural'");
   if (!help) db.run("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", ['HelpNeural', hashPassword('admin000'), 'helper', 'active']);
@@ -191,7 +192,8 @@ function registerIPCHandlers() {
   ipcMain.handle('app:getPermissions', (_, role) => ({ permissions: ROLE_PERMISSIONS[role] || ROLE_PERMISSIONS.user }));
   ipcMain.handle('app:checkSchedule', () => checkAllSchedules());
   ipcMain.handle('app:getWebhookPort', () => ({ port: WEBHOOK_PORT }));
-  ipcMain.handle('app:reloadData', () => { return { success: true }; }); // Принудительная перезагрузка
+  ipcMain.handle('app:getMainAdmin', () => ({ login: MAIN_ADMIN_LOGIN }));
+  ipcMain.handle('app:reloadAll', () => { syncPolling(queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"), queryAll("SELECT * FROM groups WHERE status = 'active'")); return { success: true }; });
   
   ipcMain.handle('data:export', async () => { try { return { success: true, data: { bots: queryAll("SELECT id, name, token, online, status, created_at FROM bots").map(b => ({...b, token: decrypt(b.token)})), groups: queryAll("SELECT g.id, g.name, g.chat_id, g.bot_id, g.topic_ids, g.status, g.created_at, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id"), schedules: queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id"), users: queryAll("SELECT id, login, role, status, created_at FROM users"), templates: queryAll("SELECT * FROM templates") } }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('data:import', async (_, { bots, groups, schedules, users, templates }) => { try { if (bots) for (const b of bots) if (b.name && b.token) try { db.run("INSERT OR IGNORE INTO bots (name, token, online, status) VALUES (?, ?, ?, ?)", [b.name, encrypt(b.token), b.online ? 1 : 0, b.status || 'active']); } catch(e) {} if (groups) for (const g of groups) if (g.name && g.chat_id && g.bot_id) try { db.run("INSERT OR IGNORE INTO groups (name, chat_id, bot_id, topic_ids, status) VALUES (?, ?, ?, ?, ?)", [g.name, g.chat_id, g.bot_id, g.topic_ids || null, g.status || 'active']); } catch(e) {} if (schedules) for (const s of schedules) if (s.name && s.text && s.group_id && s.bot_id) try { db.run("INSERT OR IGNORE INTO schedules (name, text, group_id, bot_id, scheduled_time, repeat_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)", [s.name, s.text, s.group_id, s.bot_id, s.scheduled_time, s.repeat_type || 'once', s.status || 'active']); } catch(e) {} if (templates) for (const t of templates) if (t.name && t.content) try { db.run("INSERT OR IGNORE INTO templates (name, content) VALUES (?, ?)", [t.name, t.content]); } catch(e) {} saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
@@ -210,9 +212,58 @@ function registerIPCHandlers() {
   
   ipcMain.handle('auth:getUsers', () => queryAll("SELECT id, login, role, status, created_at, delete_request FROM users ORDER BY id"));
   ipcMain.handle('auth:addUser', (_, { login, password, role, currentUserRole }) => { if (currentUserRole !== 'admin') return { success: false, error: 'Нет прав' }; const exists = queryOne("SELECT id FROM users WHERE login = ?", [login]); if (exists) return { success: false, error: 'Логин занят' }; AIMonitor.log('ADD_USER', null, `Создан пользователь: ${login}`, role === 'admin' ? 'high' : 'low'); logActivity(null, 'ADD_USER', `Создан пользователь ${login}`); return runSql("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", [login, hashPassword(password), role || 'user', 'active']); });
-  ipcMain.handle('auth:updateUser', (_, { id, login, password, currentUserId, currentUserRole }) => { const targetUser = queryOne("SELECT * FROM users WHERE id = ?", [id]); if (!targetUser) return { success: false, error: 'Пользователь не найден' }; if (password && targetUser.role === 'admin' && id !== currentUserId) { AIMonitor.log('SECURITY_ALERT', currentUserId, `Попытка смены пароля админа ${targetUser.login}`, 'critical'); return { success: false, error: 'Запрещено AI' }; } if (id !== currentUserId && currentUserRole !== 'admin') return { success: false, error: 'Нет прав' }; if (login) { const exists = queryOne("SELECT id FROM users WHERE login = ? AND id != ?", [login, id]); if (exists) return { success: false, error: 'Логин занят' }; runSql("UPDATE users SET login = ? WHERE id = ?", [login, id]); logActivity(currentUserId, 'CHANGE_LOGIN', `Смена логина ${id}`); } if (password) { runSql("UPDATE users SET password = ? WHERE id = ?", [hashPassword(password), id]); logActivity(currentUserId, 'CHANGE_PASSWORD', `Смена пароля ${id}`); } return { success: true }; });
-  ipcMain.handle('auth:deleteUser', (_, { id, currentUserRole }) => { if (currentUserRole !== 'admin') return { success: false, error: 'Нет прав' }; const target = queryOne("SELECT * FROM users WHERE id = ?", [id]); if (target?.role === 'admin') { AIMonitor.log('SECURITY_ALERT', null, 'Попытка удаления админа', 'critical'); return { success: false, error: 'Защищено AI' }; } AIMonitor.log('DELETE_USER', null, `Удалён пользователь ${id}`, 'high'); logActivity(null, 'DELETE_USER', `Удалён пользователь ${id}`); return runSql("DELETE FROM users WHERE id = ?", [id]); });
-  ipcMain.handle('auth:toggleUserStatus', (_, { id, status, currentUserRole }) => { if (currentUserRole !== 'admin' && currentUserRole !== 'helper') return { success: false, error: 'Нет прав' }; const target = queryOne("SELECT * FROM users WHERE id = ?", [id]); if (target?.role === 'admin') { AIMonitor.log('SECURITY_ALERT', null, 'Попытка блокировки админа', 'critical'); return { success: false, error: 'Защищено AI' }; } AIMonitor.log(status === 'active' ? 'UNBLOCK_USER' : 'BLOCK_USER', null, `Пользователь ${id}: ${status}`, status === 'inactive' ? 'medium' : 'low'); logActivity(null, status === 'active' ? 'UNBLOCK_USER' : 'BLOCK_USER', `Пользователь ${id}: ${status}`); return runSql("UPDATE users SET status = ? WHERE id = ?", [status, id]); });
+  ipcMain.handle('auth:updateUser', (_, { id, login, password, currentUserId, currentUserRole }) => { 
+    const targetUser = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
+    if (!targetUser) return { success: false, error: 'Пользователь не найден' }; 
+    
+    // Защита главного админа
+    if (targetUser.login === MAIN_ADMIN_LOGIN) {
+      return { success: false, error: 'Главный админ защищён' };
+    }
+    
+    if (password && targetUser.role === 'admin' && id !== currentUserId) { 
+      AIMonitor.log('SECURITY_ALERT', currentUserId, `Попытка смены пароля админа ${targetUser.login}`, 'critical'); 
+      return { success: false, error: 'Запрещено AI' }; 
+    } 
+    if (id !== currentUserId && currentUserRole !== 'admin') return { success: false, error: 'Нет прав' }; 
+    if (login) { const exists = queryOne("SELECT id FROM users WHERE login = ? AND id != ?", [login, id]); if (exists) return { success: false, error: 'Логин занят' }; runSql("UPDATE users SET login = ? WHERE id = ?", [login, id]); logActivity(currentUserId, 'CHANGE_LOGIN', `Смена логина ${id}`); } 
+    if (password) { runSql("UPDATE users SET password = ? WHERE id = ?", [hashPassword(password), id]); logActivity(currentUserId, 'CHANGE_PASSWORD', `Смена пароля ${id}`); } 
+    return { success: true }; 
+  });
+  ipcMain.handle('auth:deleteUser', (_, { id, currentUserRole }) => { 
+    if (currentUserRole !== 'admin') return { success: false, error: 'Нет прав' }; 
+    const target = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
+    
+    // Защита главного админа
+    if (target?.login === MAIN_ADMIN_LOGIN) {
+      AIMonitor.log('SECURITY_ALERT', null, 'Попытка удаления главного админа', 'critical');
+      return { success: false, error: 'Главный админ защищён и не может быть удалён' }; 
+    }
+    
+    if (target?.role === 'admin') { AIMonitor.log('SECURITY_ALERT', null, 'Попытка удаления админа', 'critical'); return { success: false, error: 'Защищено AI' }; } 
+    AIMonitor.log('DELETE_USER', null, `Удалён пользователь ${id}`, 'high'); 
+    logActivity(null, 'DELETE_USER', `Удалён пользователь ${id}`); 
+    const result = runSql("DELETE FROM users WHERE id = ?", [id]);
+    // Перезапускаем polling после удаления
+    if (result.success) {
+      syncPolling(queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"), queryAll("SELECT * FROM groups WHERE status = 'active'"));
+    }
+    return result; 
+  });
+  ipcMain.handle('auth:toggleUserStatus', (_, { id, status, currentUserRole }) => { 
+    if (currentUserRole !== 'admin' && currentUserRole !== 'helper') return { success: false, error: 'Нет прав' }; 
+    const target = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
+    
+    // Защита главного админа
+    if (target?.login === MAIN_ADMIN_LOGIN) {
+      return { success: false, error: 'Главный админ защищён' };
+    }
+    
+    if (target?.role === 'admin') { AIMonitor.log('SECURITY_ALERT', null, 'Попытка блокировки админа', 'critical'); return { success: false, error: 'Защищено AI' }; } 
+    AIMonitor.log(status === 'active' ? 'UNBLOCK_USER' : 'BLOCK_USER', null, `Пользователь ${id}: ${status}`, status === 'inactive' ? 'medium' : 'low'); 
+    logActivity(null, status === 'active' ? 'UNBLOCK_USER' : 'BLOCK_USER', `Пользователь ${id}: ${status}`); 
+    return runSql("UPDATE users SET status = ? WHERE id = ?", [status, id]); 
+  });
   
   ipcMain.handle('ai:getLogs', () => AIMonitor.getLogs());
   ipcMain.handle('ai:getAlerts', () => AIMonitor.getAlerts());
@@ -221,7 +272,7 @@ function registerIPCHandlers() {
   ipcMain.handle('db:getBots', () => queryAll("SELECT * FROM bots ORDER BY id").map(b => ({ ...b, token: decrypt(b.token) })));
   ipcMain.handle('db:addBot', (_, { name, token }) => { try { db.run("INSERT INTO bots (name, token, status) VALUES (?, ?, ?)", [name, encrypt(token), 'active']); const lastId = queryOne("SELECT last_insert_rowid() as id"); AIMonitor.log('ADD_BOT', null, `Добавлен бот: ${name}`, 'medium'); logActivity(null, 'ADD_BOT', `Добавлен бот ${name}`); saveDatabase(); return { success: true, id: lastId.id }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('db:updateBot', (_, { id, name, token, status }) => { if (token) return runSql("UPDATE bots SET name = ?, token = ?, status = ? WHERE id = ?", [name, encrypt(token), status || 'active', id]); else return runSql("UPDATE bots SET name = ?, status = ? WHERE id = ?", [name, status || 'active', id]); });
-  ipcMain.handle('db:deleteBot', (_, id) => { AIMonitor.log('DELETE_BOT', null, `Удалён бот ${id}`, 'medium'); logActivity(null, 'DELETE_BOT', `Удалён бот ${id}`); return runSql("DELETE FROM bots WHERE id = ?", [id]); });
+  ipcMain.handle('db:deleteBot', (_, id) => { AIMonitor.log('DELETE_BOT', null, `Удалён бот ${id}`, 'medium'); logActivity(null, 'DELETE_BOT', `Удалён бот ${id}`); const result = runSql("DELETE FROM bots WHERE id = ?", [id]); if (result.success) syncPolling(queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"), queryAll("SELECT * FROM groups WHERE status = 'active'")); return result; });
   ipcMain.handle('db:toggleBotStatus', (_, { id, status }) => runSql("UPDATE bots SET status = ? WHERE id = ?", [status, id]));
   
   ipcMain.handle('db:getGroups', () => queryAll("SELECT g.*, b.name as bot_name, b.token as bot_token FROM groups g LEFT JOIN bots b ON g.bot_id = b.id ORDER BY g.id"));
@@ -240,6 +291,7 @@ function registerIPCHandlers() {
   ipcMain.handle('db:updateSchedule', (_, { id, name, text, groupId, botId, scheduledTime, repeatType }) => runSql("UPDATE schedules SET name = ?, text = ?, group_id = ?, bot_id = ?, scheduled_time = ?, repeat_type = ? WHERE id = ?", [name, text, groupId, botId, scheduledTime, repeatType, id]));
   ipcMain.handle('db:deleteSchedule', (_, id) => { logActivity(null, 'DELETE_SCHEDULE', `Удалено расписание ${id}`); return runSql("DELETE FROM schedules WHERE id = ?", [id]); });
   ipcMain.handle('db:toggleSchedule', (_, { id, status }) => runSql("UPDATE schedules SET status = ? WHERE id = ?", [status, id]));
+  ipcMain.handle('db:resetSchedule', (_, id) => runSql("UPDATE schedules SET last_executed = NULL WHERE id = ?", [id])); // Сброс для повторной отправки
   
   ipcMain.handle('db:getTemplates', () => queryAll("SELECT * FROM templates ORDER BY id"));
   ipcMain.handle('db:addTemplate', (_, { name, content }) => { try { db.run("INSERT INTO templates (name, content) VALUES (?, ?)", [name, content]); saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
@@ -458,15 +510,15 @@ async function createTray() {
   const contextMenu = Menu.buildFromTemplate([
     { label: '📱 Открыть HubPro', click: () => { win.show(); win.focus(); } },
     { type: 'separator' },
-    { label: '📊 Проверить расписание', click: () => { const result = checkAllSchedules(); showNotification('HubPro', result.success ? `Проверка: ${result.executed} выполнено` : 'Ошибка'); } },
     { label: '🔄 Перезапустить polling', click: () => { const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"); const groups = queryAll("SELECT * FROM groups WHERE status = 'active'"); syncPolling(bots, groups); showNotification('HubPro', 'Polling перезапущен'); }},
+    { label: '📊 Проверить расписание', click: () => { const result = checkAllSchedules(); showNotification('HubPro', result.success ? `Проверка: ${result.executed} выполнено` : 'Ошибка'); } },
     { type: 'separator' },
     { label: '❌ Выход', click: () => { app.isQuitting = true; app.quit(); }}
   ]);
   
   tray.setContextMenu(contextMenu);
   tray.on('double-click', () => { win.show(); win.focus(); });
-  showNotification('HubPro', 'Приложение запущено');
+  showNotification('HubPro', 'HubPro v' + VERSION + ' запущен');
 }
 
 function syncPolling(bots, groups) { 
