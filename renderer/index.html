@@ -20,6 +20,7 @@
     .btn-secondary:hover { background: rgba(255,255,255,0.2); }
     .btn-green { background: linear-gradient(135deg, #10b981, #059669); }
     .btn-red { background: linear-gradient(135deg, #ef4444, #dc2626); }
+    .btn-orange { background: linear-gradient(135deg, #f59e0b, #d97706); }
     .nav-item { padding: 14px 18px; border-radius: 12px; cursor: pointer; transition: all 0.2s; color: rgba(255,255,255,0.7); margin-bottom: 4px; }
     .nav-item:hover, .nav-item.active { background: linear-gradient(135deg, rgba(139,92,246,0.3), rgba(99,102,241,0.3)); color: white; }
     .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; align-items: center; justify-content: center; }
@@ -167,7 +168,7 @@
 
   <script>
     let currentUser = null, permissions = null, bots = [], groups = [], messages = [], schedules = [], users = [], templates = [], aiLogs = [], aiAlerts = [];
-    let currentChatGroup = null, messageChart = null, activityChart = null;
+    let currentChatGroup = null, messageChart = null, activityChart = null, mainAdminLogin = 'NeuralAP';
     const TABS_CONFIG = {
       dashboard: { name: '📊 Дашборд', roles: ['admin'] },
       bots: { name: '🤖 Боты', roles: ['admin'] },
@@ -181,7 +182,7 @@
       ai_monitor: { name: '🛡️ AI Мониторинг', roles: ['admin'] },
       settings: { name: '⚙️ Настройки', roles: ['admin', 'user', 'helper'] }
     };
-
+    
     async function login() {
       const login = document.getElementById('loginUsername').value.trim();
       const password = document.getElementById('loginPassword').value;
@@ -229,6 +230,9 @@
       users = await window.electronAPI.getUsers();
       templates = await window.electronAPI.getTemplates();
       const stats = await window.electronAPI.getStats();
+      const mainAdmin = await window.electronAPI.getMainAdmin();
+      mainAdminLogin = mainAdmin.login;
+      
       document.getElementById('statBots').textContent = stats.botCount;
       document.getElementById('statActiveBots').textContent = 'Активных: ' + stats.activeBots;
       document.getElementById('statGroups').textContent = stats.groupCount;
@@ -310,6 +314,43 @@
       document.getElementById('groupsList').innerHTML = groups.map(g => `<div class="glass p-5 rounded-2xl"><div class="flex justify-between items-start mb-3"><div class="font-bold text-lg">${escapeHtml(g.name)}</div><span class="badge ${g.status === 'active' ? 'badge-active' : 'badge-inactive'}">${g.status === 'active' ? '🟢' : '🔴'}</span></div><div class="text-sm text-slate-400">Chat: ${g.chat_id}</div><div class="text-sm text-slate-400 mb-4">Бот: ${escapeHtml(g.bot_name || 'Не выбран')}</div><div class="flex gap-2 flex-wrap"><button onclick="toggleGroupStatus(${g.id}, '${g.status === 'active' ? 'inactive' : 'active'}')" class="btn-secondary text-sm py-2 px-3">${g.status === 'active' ? '⏸️' : '▶️'}</button><button onclick="editGroup(${g.id})" class="btn-secondary text-sm py-2 px-3">✏️</button><button onclick="deleteGroup(${g.id})" class="btn-secondary text-sm py-2 px-3">🗑️</button></div></div>`).join('') || '<div class="text-slate-400 text-lg">Нет групп. Добавьте первую!</div>';
     }
 
+    function renderSchedules() {
+      if (currentUser.role !== 'admin') return;
+      document.getElementById('schedulesList').innerHTML = schedules.map(s => `<div class="glass p-5 rounded-2xl"><div class="flex justify-between items-start mb-3"><div class="font-bold text-lg">${escapeHtml(s.name)}</div><span class="badge ${s.status === 'active' ? 'badge-active' : 'badge-inactive'}">${s.status === 'active' ? '🟢' : '🔴'}</span></div><div class="text-sm text-slate-400">${s.group_name} • ${s.scheduled_time}</div><div class="text-sm text-slate-400 mb-3">${escapeHtml(s.text).substring(0, 50)}...</div><div class="flex gap-2 flex-wrap"><button onclick="toggleSchedule(${s.id}, '${s.status === 'active' ? 'inactive' : 'active'}')" class="btn-secondary text-sm py-2 px-3">${s.status === 'active' ? '⏸️' : '▶️'}</button><button onclick="editSchedule(${s.id})" class="btn-secondary text-sm py-2 px-3">✏️ Редактировать</button><button onclick="resetSchedule(${s.id})" class="btn-orange text-sm py-2 px-3">🔄 Запустить</button><button onclick="deleteSchedule(${s.id})" class="btn-secondary text-sm py-2 px-3">🗑️</button></div></div>`).join('') || '<div class="text-slate-400 text-lg">Нет расписаний</div>';
+    }
+
+    async function resetSchedule(id) {
+      const result = await window.electronAPI.resetSchedule(id);
+      if (result.success) {
+        showToast('✅ Расписание сброшено! Можно запустить снова.');
+        await loadData();
+      } else {
+        showToast('❌ Ошибка: ' + result.error, 'error');
+      }
+    }
+
+    function editSchedule(id) {
+      const s = schedules.find(sc => sc.id === id);
+      if (!s) return;
+      document.getElementById('modalTitle').textContent = '✏️ Редактировать расписание';
+      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Название</label><input type="text" id="scheduleName" class="input-field w-full" value="${escapeHtml(s.name)}"></div><div><label class="block text-sm text-slate-400 mb-2">Текст сообщения</label><textarea id="scheduleText" class="input-field w-full h-24">${escapeHtml(s.text)}</textarea></div><div><label class="block text-sm text-slate-400 mb-2">Группа</label><select id="scheduleGroupId" class="input-field w-full">${groups.map(g => `<option value="${g.id}" ${g.id === s.group_id ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}</select></div><div><label class="block text-sm text-slate-400 mb-2">Бот</label><select id="scheduleBotId" class="input-field w-full">${bots.map(b => `<option value="${b.id}" ${b.id === s.bot_id ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('')}</select></div><div><label class="block text-sm text-slate-400 mb-2">Время</label><input type="datetime-local" id="scheduleTime" class="input-field w-full" value="${s.scheduled_time}"></div><div><label class="block text-sm text-slate-400 mb-2">Повтор</label><select id="scheduleRepeat" class="input-field w-full"><option value="once" ${s.repeat_type === 'once' ? 'selected' : ''}>Однократно</option><option value="daily" ${s.repeat_type === 'daily' ? 'selected' : ''}>Ежедневно</option><option value="weekly" ${s.repeat_type === 'weekly' ? 'selected' : ''}>Еженедельно</option></select></div></div>`;
+      document.getElementById('modalSaveBtn').onclick = () => saveEditSchedule(id);
+      openModal();
+    }
+
+    async function saveEditSchedule(id) {
+      const name = document.getElementById('scheduleName').value.trim();
+      const text = document.getElementById('scheduleText').value.trim();
+      const groupId = parseInt(document.getElementById('scheduleGroupId').value);
+      const botId = parseInt(document.getElementById('scheduleBotId').value);
+      const scheduledTime = document.getElementById('scheduleTime').value;
+      const repeatType = document.getElementById('scheduleRepeat').value;
+      if (!name || !text || !scheduledTime) return showToast('Заполните поля', 'error');
+      const result = await window.electronAPI.updateSchedule({ id, name, text, groupId, botId, scheduledTime, repeatType });
+      if (result.success) { showToast('✅ Обновлено!'); closeModal(); await loadData(); }
+      else showToast('❌ ' + result.error, 'error');
+    }
+
     function renderTemplates() {
       if (currentUser.role !== 'admin') return;
       document.getElementById('templatesList').innerHTML = templates.map(t => `<div class="glass p-5 rounded-2xl"><div class="font-bold text-lg mb-2">${escapeHtml(t.name)}</div><div class="text-sm text-slate-400 mb-4 line-clamp-3">${escapeHtml(t.content)}</div><div class="flex gap-2"><button onclick="useTemplate(${t.id})" class="btn-primary text-sm py-2 px-3">📤 Использовать</button><button onclick="editTemplate(${t.id})" class="btn-secondary text-sm py-2 px-3">✏️</button><button onclick="deleteTemplate(${t.id})" class="btn-secondary text-sm py-2 px-3">🗑️</button></div></div>`).join('') || '<div class="text-slate-400 text-lg">Нет шаблонов. Создайте первый!</div>';
@@ -326,7 +367,12 @@
     function renderUsers() {
       const isAdmin = currentUser.role === 'admin';
       if (!isAdmin && currentUser.role !== 'helper') return;
-      document.getElementById('usersList').innerHTML = users.map(u => { const isSelf = u.id === currentUser.id; const isAdminUser = u.role === 'admin'; return `<div class="glass p-5 rounded-2xl"><div class="flex justify-between items-start mb-3"><div class="font-bold text-lg">${escapeHtml(u.login)}</div><span class="badge ${u.role === 'admin' ? 'bg-purple-500/20 text-purple-400' : u.role === 'helper' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-blue-500/20 text-blue-400'}">${u.role === 'admin' ? '👑' : u.role === 'helper' ? '🔧' : '👤'}</span></div><div class="text-sm text-slate-400 mb-3">Статус: <span class="${u.status === 'active' ? 'text-green-400' : 'text-red-400'}">${u.status === 'active' ? 'Активен' : 'Заблокирован'}</span></div><div class="flex gap-2 flex-wrap">${!isAdminUser ? `<button onclick="toggleUserStatus(${u.id}, '${u.status === 'active' ? 'inactive' : 'active'}')" class="btn-secondary text-sm py-2 px-3">${u.status === 'active' ? '🔴' : '🟢'}</button>` : ''}${!isSelf && !isAdminUser ? `<button onclick="editUser(${u.id})" class="btn-secondary text-sm py-2 px-3">🔐</button>` : ''}${isAdmin && !isSelf && !isAdminUser ? `<button onclick="deleteUser(${u.id})" class="btn-secondary text-sm py-2 px-3">🗑️</button>` : ''}</div></div>`; }).join('') || '<div class="text-slate-400 text-lg">Нет пользователей</div>';
+      document.getElementById('usersList').innerHTML = users.map(u => { 
+        const isMainAdmin = u.login === mainAdminLogin;
+        const isSelf = u.id === currentUser.id; 
+        const isAdminUser = u.role === 'admin'; 
+        return `<div class="glass p-5 rounded-2xl"><div class="flex justify-between items-start mb-3"><div class="font-bold text-lg">${escapeHtml(u.login)}${isMainAdmin ? ' 👑' : ''}</div><span class="badge ${u.role === 'admin' ? 'bg-purple-500/20 text-purple-400' : u.role === 'helper' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-blue-500/20 text-blue-400'}">${u.role === 'admin' ? '👑' : u.role === 'helper' ? '🔧' : '👤'}</span></div><div class="text-sm text-slate-400 mb-3">Статус: <span class="${u.status === 'active' ? 'text-green-400' : 'text-red-400'}">${u.status === 'active' ? 'Активен' : 'Заблокирован'}</span></div><div class="flex gap-2 flex-wrap">${!isMainAdmin && !isAdminUser ? `<button onclick="toggleUserStatus(${u.id}, '${u.status === 'active' ? 'inactive' : 'active'}')" class="btn-secondary text-sm py-2 px-3">${u.status === 'active' ? '🔴' : '🟢'}</button>` : ''}${!isSelf && !isMainAdmin && !isAdminUser ? `<button onclick="editUser(${u.id})" class="btn-secondary text-sm py-2 px-3">🔐</button>` : ''}${isAdmin && !isSelf && !isMainAdmin ? `<button onclick="deleteUser(${u.id})" class="btn-secondary text-sm py-2 px-3">🗑️</button>` : ''}</div></div>`; 
+      }).join('') || '<div class="text-slate-400 text-lg">Нет пользователей</div>';
     }
 
     function editUser(id) {
@@ -393,11 +439,6 @@
         showToast('❌ ' + (result.description || 'Ошибка'), 'error');
         await selectChatGroup(currentChatGroup.id);
       }
-    }
-
-    function renderSchedules() {
-      if (currentUser.role !== 'admin') return;
-      document.getElementById('schedulesList').innerHTML = schedules.map(s => `<div class="glass p-5 rounded-2xl flex justify-between items-center"><div><div class="font-bold text-lg">${escapeHtml(s.name)}</div><div class="text-sm text-slate-400">${s.group_name} • ${s.scheduled_time}</div></div><div class="flex gap-2"><button onclick="toggleSchedule(${s.id}, '${s.status === 'active' ? 'inactive' : 'active'}')" class="btn-secondary text-sm py-2 px-4">${s.status === 'active' ? '⏸️' : '▶️'}</button><button onclick="deleteSchedule(${s.id})" class="btn-secondary text-sm py-2 px-4">🗑️</button></div></div>`).join('') || '<div class="text-slate-400 text-lg">Нет расписаний</div>';
     }
 
     function renderActivity() {
