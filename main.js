@@ -5,15 +5,16 @@ const fs = require('fs');
 const crypto = require('crypto');
 const http = require('http');
 
-const VERSION = '1.9.0';
+const VERSION = '2.0.0';
 const UPDATE_INFO = [
-  { version: '1.9.0', date: '2026-04-20', changes: ['Исправлен UI баг', 'Редактирование расписания', 'Защита главного админа'] },
-  { version: '1.8.2', date: '2026-04-20', changes: ['Исправлен UI после удаления'] }
+  { version: '2.0.0', date: '2026-04-22', changes: ['Веб-интерфейс', 'Доступ с телефона', 'Автообновление'] },
+  { version: '1.9.1', date: '2026-04-21', changes: ['Защита NeuralAP', 'Редактирование расписания'] }
 ];
 
 let win, tray, pollingIntervals = {}, botOffsets = {}, db, scheduleIntervals = [], SQL;
-let webhookServer = null;
+let webhookServer = null, webServer = null;
 const WEBHOOK_PORT = 3001;
+const WEB_PORT = 8080;
 const MAIN_ADMIN_LOGIN = 'NeuralAP';
 
 const ENCRYPTION_KEY = crypto.scryptSync(app.getPath('userData'), 'hubpro-salt', 32);
@@ -129,7 +130,169 @@ function queryOne(sql, params = []) { const r = queryAll(sql, params); return r.
 function runSql(sql, params = []) { try { db.run(sql, params); saveDatabase(); return { success: true }; } catch(e) { return { success: false, error: e.message }; } }
 function logActivity(userId, action, details) { db.run("INSERT INTO activity_log (user_id, action, details) VALUES (?, ?, ?)", [userId, action, details || null]); saveDatabase(); }
 
-function startWebhookServer(port = 3001) {
+// ============ WEB SERVER ============
+function startWebServer(port = WEB_PORT) {
+  if (webServer) return;
+  
+  const htmlPath = path.join(__dirname, 'renderer', 'index.html');
+  let htmlContent = '';
+  if (fs.existsSync(htmlPath)) {
+    htmlContent = fs.readFileSync(htmlPath, 'utf8');
+  }
+  
+  webServer = http.createServer(async (req, res) => {
+    // CORS headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+    
+    const url = req.url.split('?')[0];
+    
+    // API endpoints
+    if (url.startsWith('/api/')) {
+      const apiPath = url.replace('/api/', '');
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', async () => {
+        try {
+          const result = await handleAPI(apiPath, body);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+        } catch (e) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: e.message }));
+        }
+      });
+      return;
+    }
+    
+    // Serve HTML
+    if (url === '/' || url === '/index.html') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(htmlContent);
+      return;
+    }
+    
+    // Static files
+    const filePath = path.join(__dirname, 'renderer', url);
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+      const ext = path.extname(filePath);
+      const contentTypes = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg' };
+      res.writeHead(200, { 'Content-Type': contentTypes[ext] || 'text/plain' });
+      res.end(fs.readFileSync(filePath));
+      return;
+    }
+    
+    res.writeHead(404);
+    res.end('Not found');
+  });
+  
+  webServer.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.log(`Порт ${port} занят, пробую ${port + 1}`);
+      startWebServer(port + 1);
+    }
+  });
+  
+  webServer.listen(port, '0.0.0.0', () => {
+    console.log(`🌐 Веб-интерфейс: http://localhost:${port}`);
+    console.log(`📱 С телефона: http://${getLocalIP()}:${port}`);
+    showNotification('HubPro', `Веб на http://${getLocalIP()}:${port}`);
+  });
+}
+
+function getLocalIP() {
+  const os = require('os');
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
+
+async function handleAPI(path, body) {
+  const params = body ? JSON.parse(body) : {};
+  
+  if (path === 'login') {
+    const user = queryOne("SELECT * FROM users WHERE login = ?", [params.login]);
+    if (!user) return { success: false, error: 'Пользователь не найден' };
+    if (user.password !== hashPassword(params.password)) return { success: false, error: 'Неверный пароль' };
+    if (user.status !== 'active') return { success: false, error: 'Аккаунт заблокирован' };
+    return { success: true, user: { id: user.id, login: user.login, role: user.role }, permissions: ROLE_PERMISSIONS[user.role] };
+  }
+  
+  if (path === 'getData') {
+    return {
+      bots: queryAll("SELECT * FROM bots").map(b => ({ ...b, token: decrypt(b.token) })),
+      groups: queryAll("SELECT g.*, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id"),
+      schedules: queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id"),
+      users: queryAll("SELECT id, login, role, status, created_at FROM users"),
+      templates: queryAll("SELECT * FROM templates"),
+      stats: getStats()
+    };
+  }
+  
+  if (path === 'sendMessage') {
+    const bot = queryOne("SELECT * FROM bots WHERE id = ?", [params.botId]);
+    const group = queryOne("SELECT * FROM groups WHERE id = ?", [params.groupId]);
+    if (!bot || !group) return { success: false, error: 'Бот или группа не найдены' };
+    
+    const token = decrypt(bot.token);
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: group.chat_id, text: params.text, parse_mode: 'HTML' })
+    });
+    const result = await res.json();
+    if (result.ok) {
+      db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [params.groupId, params.text, 1, params.sender || 'web', 'sent']);
+      saveDatabase();
+      return { success: true };
+    }
+    return { success: false, error: result.description };
+  }
+  
+  if (path === 'getMessages') {
+    return queryAll("SELECT * FROM messages WHERE group_id = ? ORDER BY time DESC LIMIT 100", [params.groupId]).reverse();
+  }
+  
+  if (path === 'getVersion') {
+    return { version: VERSION, updates: UPDATE_INFO };
+  }
+  
+  return { error: 'Unknown API' };
+}
+
+
+function getStats() {
+  const today = new Date().toISOString().split('T')[0];
+  return {
+    botCount: queryAll("SELECT COUNT(*) as c FROM bots")[0]?.c || 0,
+    activeBots: queryAll("SELECT COUNT(*) as c FROM bots WHERE status = 'active'")[0]?.c || 0,
+    groupCount: queryAll("SELECT COUNT(*) as c FROM groups")[0]?.c || 0,
+    activeGroups: queryAll("SELECT COUNT(*) as c FROM groups WHERE status = 'active'")[0]?.c || 0,
+    messageCount: queryAll("SELECT COUNT(*) as c FROM messages")[0]?.c || 0,
+    messagesToday: queryAll("SELECT COUNT(*) as c FROM messages WHERE date(time) = ?", [today])[0]?.c || 0,
+    userCount: queryAll("SELECT COUNT(*) as c FROM users")[0]?.c || 0,
+    activeUsers: queryAll("SELECT COUNT(*) as c FROM users WHERE status = 'active'")[0]?.c || 0,
+    scheduleCount: queryAll("SELECT COUNT(*) as c FROM schedules")[0]?.c || 0,
+    activeSchedules: queryAll("SELECT COUNT(*) as c FROM schedules WHERE status = 'active'")[0]?.c || 0,
+    templateCount: queryAll("SELECT COUNT(*) as c FROM templates")[0]?.c || 0
+  };
+}
+
+// ============ WEBHOOK SERVER ============
+function startWebhookServer(port = WEBHOOK_PORT) {
   if (webhookServer) return;
   
   webhookServer = http.createServer(async (req, res) => {
@@ -183,7 +346,6 @@ function startWebhookServer(port = 3001) {
   
   webhookServer.listen(port, () => {
     console.log(`Webhook server started on port ${port}`);
-    showNotification('HubPro', `Webhook на порту ${port}`);
   });
 }
 
@@ -192,6 +354,7 @@ function registerIPCHandlers() {
   ipcMain.handle('app:getPermissions', (_, role) => ({ permissions: ROLE_PERMISSIONS[role] || ROLE_PERMISSIONS.user }));
   ipcMain.handle('app:checkSchedule', () => checkAllSchedules());
   ipcMain.handle('app:getWebhookPort', () => ({ port: WEBHOOK_PORT }));
+  ipcMain.handle('app:getWebPort', () => ({ port: WEB_PORT }));
   ipcMain.handle('app:getMainAdmin', () => ({ login: MAIN_ADMIN_LOGIN }));
   ipcMain.handle('app:reloadAll', () => { syncPolling(queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"), queryAll("SELECT * FROM groups WHERE status = 'active'")); return { success: true }; });
   
@@ -215,16 +378,8 @@ function registerIPCHandlers() {
   ipcMain.handle('auth:updateUser', (_, { id, login, password, currentUserId, currentUserRole }) => { 
     const targetUser = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
     if (!targetUser) return { success: false, error: 'Пользователь не найден' }; 
-    
-    // Защита главного админа
-    if (targetUser.login === MAIN_ADMIN_LOGIN) {
-      return { success: false, error: 'Главный админ защищён' };
-    }
-    
-    if (password && targetUser.role === 'admin' && id !== currentUserId) { 
-      AIMonitor.log('SECURITY_ALERT', currentUserId, `Попытка смены пароля админа ${targetUser.login}`, 'critical'); 
-      return { success: false, error: 'Запрещено AI' }; 
-    } 
+    if (targetUser.login === MAIN_ADMIN_LOGIN) return { success: false, error: 'Главный админ защищён' };
+    if (password && targetUser.role === 'admin' && id !== currentUserId) { AIMonitor.log('SECURITY_ALERT', currentUserId, `Попытка смены пароля админа ${targetUser.login}`, 'critical'); return { success: false, error: 'Запрещено AI' }; } 
     if (id !== currentUserId && currentUserRole !== 'admin') return { success: false, error: 'Нет прав' }; 
     if (login) { const exists = queryOne("SELECT id FROM users WHERE login = ? AND id != ?", [login, id]); if (exists) return { success: false, error: 'Логин занят' }; runSql("UPDATE users SET login = ? WHERE id = ?", [login, id]); logActivity(currentUserId, 'CHANGE_LOGIN', `Смена логина ${id}`); } 
     if (password) { runSql("UPDATE users SET password = ? WHERE id = ?", [hashPassword(password), id]); logActivity(currentUserId, 'CHANGE_PASSWORD', `Смена пароля ${id}`); } 
@@ -233,32 +388,18 @@ function registerIPCHandlers() {
   ipcMain.handle('auth:deleteUser', (_, { id, currentUserRole }) => { 
     if (currentUserRole !== 'admin') return { success: false, error: 'Нет прав' }; 
     const target = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
-    
-    // Защита главного админа
-    if (target?.login === MAIN_ADMIN_LOGIN) {
-      AIMonitor.log('SECURITY_ALERT', null, 'Попытка удаления главного админа', 'critical');
-      return { success: false, error: 'Главный админ защищён и не может быть удалён' }; 
-    }
-    
+    if (target?.login === MAIN_ADMIN_LOGIN) { AIMonitor.log('SECURITY_ALERT', null, 'Попытка удаления главного админа', 'critical'); return { success: false, error: 'Главный админ защищён и не может быть удалён' }; }
     if (target?.role === 'admin') { AIMonitor.log('SECURITY_ALERT', null, 'Попытка удаления админа', 'critical'); return { success: false, error: 'Защищено AI' }; } 
     AIMonitor.log('DELETE_USER', null, `Удалён пользователь ${id}`, 'high'); 
     logActivity(null, 'DELETE_USER', `Удалён пользователь ${id}`); 
     const result = runSql("DELETE FROM users WHERE id = ?", [id]);
-    // Перезапускаем polling после удаления
-    if (result.success) {
-      syncPolling(queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"), queryAll("SELECT * FROM groups WHERE status = 'active'"));
-    }
+    if (result.success) syncPolling(queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"), queryAll("SELECT * FROM groups WHERE status = 'active'"));
     return result; 
   });
   ipcMain.handle('auth:toggleUserStatus', (_, { id, status, currentUserRole }) => { 
     if (currentUserRole !== 'admin' && currentUserRole !== 'helper') return { success: false, error: 'Нет прав' }; 
     const target = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
-    
-    // Защита главного админа
-    if (target?.login === MAIN_ADMIN_LOGIN) {
-      return { success: false, error: 'Главный админ защищён' };
-    }
-    
+    if (target?.login === MAIN_ADMIN_LOGIN) return { success: false, error: 'Главный админ защищён' };
     if (target?.role === 'admin') { AIMonitor.log('SECURITY_ALERT', null, 'Попытка блокировки админа', 'critical'); return { success: false, error: 'Защищено AI' }; } 
     AIMonitor.log(status === 'active' ? 'UNBLOCK_USER' : 'BLOCK_USER', null, `Пользователь ${id}: ${status}`, status === 'inactive' ? 'medium' : 'low'); 
     logActivity(null, status === 'active' ? 'UNBLOCK_USER' : 'BLOCK_USER', `Пользователь ${id}: ${status}`); 
@@ -291,33 +432,14 @@ function registerIPCHandlers() {
   ipcMain.handle('db:updateSchedule', (_, { id, name, text, groupId, botId, scheduledTime, repeatType }) => runSql("UPDATE schedules SET name = ?, text = ?, group_id = ?, bot_id = ?, scheduled_time = ?, repeat_type = ? WHERE id = ?", [name, text, groupId, botId, scheduledTime, repeatType, id]));
   ipcMain.handle('db:deleteSchedule', (_, id) => { logActivity(null, 'DELETE_SCHEDULE', `Удалено расписание ${id}`); return runSql("DELETE FROM schedules WHERE id = ?", [id]); });
   ipcMain.handle('db:toggleSchedule', (_, { id, status }) => runSql("UPDATE schedules SET status = ? WHERE id = ?", [status, id]));
-  ipcMain.handle('db:resetSchedule', (_, id) => runSql("UPDATE schedules SET last_executed = NULL WHERE id = ?", [id])); // Сброс для повторной отправки
+  ipcMain.handle('db:resetSchedule', (_, id) => runSql("UPDATE schedules SET last_executed = NULL WHERE id = ?", [id]));
   
   ipcMain.handle('db:getTemplates', () => queryAll("SELECT * FROM templates ORDER BY id"));
   ipcMain.handle('db:addTemplate', (_, { name, content }) => { try { db.run("INSERT INTO templates (name, content) VALUES (?, ?)", [name, content]); saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('db:updateTemplate', (_, { id, name, content }) => runSql("UPDATE templates SET name = ?, content = ? WHERE id = ?", [name, content, id]));
   ipcMain.handle('db:deleteTemplate', (_, id) => runSql("DELETE FROM templates WHERE id = ?", [id]));
   
-  ipcMain.handle('db:getStats', () => {
-    const today = new Date().toISOString().split('T')[0];
-    const messagesToday = queryAll("SELECT COUNT(*) as c FROM messages WHERE date(time) = ?", [today])[0]?.c || 0;
-    return {
-      botCount: queryAll("SELECT COUNT(*) as c FROM bots")[0]?.c || 0,
-      activeBots: queryAll("SELECT COUNT(*) as c FROM bots WHERE status = 'active'")[0]?.c || 0,
-      groupCount: queryAll("SELECT COUNT(*) as c FROM groups")[0]?.c || 0,
-      activeGroups: queryAll("SELECT COUNT(*) as c FROM groups WHERE status = 'active'")[0]?.c || 0,
-      messageCount: queryAll("SELECT COUNT(*) as c FROM messages")[0]?.c || 0,
-      messagesToday,
-      sentMessages: queryAll("SELECT COUNT(*) as c FROM messages WHERE sent = 1")[0]?.c || 0,
-      receivedMessages: queryAll("SELECT COUNT(*) as c FROM messages WHERE sent = 0")[0]?.c || 0,
-      failedMessages: queryAll("SELECT COUNT(*) as c FROM messages WHERE status = 'failed'")[0]?.c || 0,
-      scheduleCount: queryAll("SELECT COUNT(*) as c FROM schedules")[0]?.c || 0,
-      activeSchedules: queryAll("SELECT COUNT(*) as c FROM schedules WHERE status = 'active'")[0]?.c || 0,
-      userCount: queryAll("SELECT COUNT(*) as c FROM users")[0]?.c || 0,
-      activeUsers: queryAll("SELECT COUNT(*) as c FROM users WHERE status = 'active'")[0]?.c || 0,
-      templateCount: queryAll("SELECT COUNT(*) as c FROM templates")[0]?.c || 0
-    };
-  });
+  ipcMain.handle('db:getStats', () => getStats());
   
   ipcMain.handle('notifications:send', (_, { userId, fromId, text, type }) => runSql("INSERT INTO notifications (user_id, from_id, text, type) VALUES (?, ?, ?, ?)", [userId, fromId, text, type || 'message']));
   ipcMain.handle('notifications:get', (_, userId) => queryAll("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50", [userId]));
@@ -463,6 +585,56 @@ async function executeSchedule(s) {
   saveDatabase(); 
 }
 
+// ============ AUTO UPDATER ============
+function setupAutoUpdater() {
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  
+  // Настройка GitHub
+  autoUpdater.logger = require('electron-log');
+  autoUpdater.feedUrl = 'https://github.com/smol0901-jpg/HubPro/releases/latest';
+  
+  autoUpdater.on('checking-for-update', () => {
+    console.log('Проверка обновлений...');
+  });
+  
+  autoUpdater.on('update-available', (info) => {
+    console.log('Доступно обновление:', info.version);
+    if (win?.webContents) win.webContents.send('update-available', info);
+    showNotification('HubPro', `Доступно обновление v${info.version}`);
+  });
+  
+  autoUpdater.on('update-not-available', () => {
+    console.log('Обновлений нет');
+  });
+  
+  autoUpdater.on('download-progress', (progress) => {
+    console.log(`Загрузка: ${progress.percent.toFixed(1)}%`);
+  });
+  
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log('Обновление загружено:', info.version);
+    if (win?.webContents) win.webContents.send('update-downloaded', info);
+    dialog.showMessageBox(win, {
+      type: 'info',
+      title: 'Обновление',
+      message: `Загружена версия ${info.version}. Перезапустить?`,
+      buttons: ['Да', 'Нет']
+    }).then(r => {
+      if (r.response === 0) autoUpdater.quitAndInstall();
+    });
+  });
+  
+  autoUpdater.on('error', (e) => {
+    console.error('Ошибка обновления:', e);
+  });
+  
+  // Проверка при запуске (только для упакованной версии)
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdatesAndNotify();
+  }
+}
+
 autoUpdater.autoDownload = true; autoUpdater.autoInstallOnAppQuit = true;
 app.whenReady().then(async () => { 
   db = await initDatabase(); 
@@ -472,6 +644,7 @@ app.whenReady().then(async () => {
   setupAutoUpdater(); 
   startScheduleChecker(); 
   startWebhookServer(WEBHOOK_PORT);
+  startWebServer(WEB_PORT);
   checkAllSchedules();
   
   const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"); 
@@ -510,6 +683,7 @@ async function createTray() {
   const contextMenu = Menu.buildFromTemplate([
     { label: '📱 Открыть HubPro', click: () => { win.show(); win.focus(); } },
     { type: 'separator' },
+    { label: '🌐 Веб-интерфейс', click: () => { require('electron').shell.openExternal(`http://localhost:${WEB_PORT}`); }},
     { label: '🔄 Перезапустить polling', click: () => { const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"); const groups = queryAll("SELECT * FROM groups WHERE status = 'active'"); syncPolling(bots, groups); showNotification('HubPro', 'Polling перезапущен'); }},
     { label: '📊 Проверить расписание', click: () => { const result = checkAllSchedules(); showNotification('HubPro', result.success ? `Проверка: ${result.executed} выполнено` : 'Ошибка'); } },
     { type: 'separator' },
@@ -558,13 +732,6 @@ function startScheduleChecker() {
   scheduleIntervals.push(id); 
 }
 
-function setupAutoUpdater() { 
-  autoUpdater.on('update-available', (i) => { if (win?.webContents) win.webContents.send('update-available', i); showNotification('HubPro', `Доступно обновление v${i.version}`); });
-  autoUpdater.on('update-downloaded', (i) => { if (win?.webContents) win.webContents.send('update-downloaded', i); dialog.showMessageBox(win, { type: 'info', title: 'Обновление', message: `Загружена версия ${i.version}. Перезапустить?`, buttons: ['Да', 'Нет'] }).then(r => { if (r.response === 0) autoUpdater.quitAndInstall(); }); });
-  autoUpdater.on('error', e => console.error(e)); 
-  if (app.isPackaged) autoUpdater.checkForUpdatesAndNotify(); 
-}
-
 app.on('window-all-closed', () => {});
 app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow()); 
-app.on('before-quit', () => { app.isQuitting = true; scheduleIntervals.forEach(id => clearInterval(id)); if (db) { saveDatabase(); db.close(); } });
+app.on('before-quit', () => { app.isQuitting = true; scheduleIntervals.forEach(id => clearInterval(id)); if (webServer) webServer.close(); if (db) { saveDatabase(); db.close(); } });
