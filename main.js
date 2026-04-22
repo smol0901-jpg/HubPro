@@ -5,10 +5,10 @@ const fs = require('fs');
 const crypto = require('crypto');
 const http = require('http');
 
-const VERSION = '2.1.0';
+const VERSION = '2.2.0';
 const UPDATE_INFO = [
-  { version: '2.1.0', date: '2026-04-22', changes: ['Веб-синхронизация', 'API для сообщений', 'Автообновление чата'] },
-  { version: '2.0.1', date: '2026-04-22', changes: ['Многострочный ввод', 'Повторная отправка', 'Удаление админов'] }
+  { version: '2.2.0', date: '2026-04-22', changes: ['Excel экспорт', 'Улучшенный дизайн'] },
+  { version: '2.1.0', date: '2026-04-22', changes: ['Веб-API', 'Синхронизация'] }
 ];
 
 let win, tray, pollingIntervals = {}, botOffsets = {}, db, scheduleIntervals = [], SQL;
@@ -131,6 +131,46 @@ function queryOne(sql, params = []) { const r = queryAll(sql, params); return r.
 function runSql(sql, params = []) { try { db.run(sql, params); saveDatabase(); return { success: true }; } catch(e) { return { success: false, error: e.message }; } }
 function logActivity(userId, action, details) { db.run("INSERT INTO activity_log (user_id, action, details) VALUES (?, ?, ?)", [userId, action, details || null]); saveDatabase(); }
 
+// ============ EXCEL EXPORT ============
+function generateExcel(data) {
+  // Простой CSV формат (можно открыть в Excel)
+  let csv = '';
+  
+  if (data.type === 'messages') {
+    csv = 'ID,Время,Текст,Отправитель,Статус,Тип\n';
+    data.items.forEach(m => {
+      csv += `${m.id},"${m.time}","${(m.text || '').replace(/"/g, '""')}","${m.sender || ''}","${m.status}","${m.sent ? 'Отправлено' : 'Получено'}"\n`;
+    });
+  } else if (data.type === 'bots') {
+    csv = 'ID,Название,Статус,Дата создания\n';
+    data.items.forEach(b => {
+      csv += `${b.id},"${b.name}","${b.status}","${b.created_at}"\n`;
+    });
+  } else if (data.type === 'groups') {
+    csv = 'ID,Название,Chat ID,Бот,Статус\n';
+    data.items.forEach(g => {
+      csv += `${g.id},"${g.name}","${g.chat_id}","${g.bot_name || ''}","${g.status}"\n`;
+    });
+  } else if (data.type === 'schedules') {
+    csv = 'ID,Название,Группа,Бот,Время,Повтор,Статус\n';
+    data.items.forEach(s => {
+      csv += `${s.id},"${s.name}","${s.group_name || ''}","${s.bot_name || ''}","${s.scheduled_time}","${s.repeat_type}","${s.status}"\n`;
+    });
+  } else if (data.type === 'users') {
+    csv = 'ID,Логин,Роль,Статус,Дата создания\n';
+    data.items.forEach(u => {
+      csv += `${u.id},"${u.login}","${u.role}","${u.status}","${u.created_at}"\n`;
+    });
+  } else if (data.type === 'activity') {
+    csv = 'ID,Пользователь,Действие,Детали,Время\n';
+    data.items.forEach(a => {
+      csv += `${a.id},"${a.login || 'Система'}","${a.action}","${a.details || ''}","${a.created_at}"\n`;
+    });
+  }
+  
+  return csv;
+}
+
 // ============ WEB SERVER ============
 function startWebServer(port = WEB_PORT) {
   if (webServer) return;
@@ -163,7 +203,6 @@ function startWebServer(port = WEB_PORT) {
         try {
           let params = {};
           if (body) params = JSON.parse(body);
-          // Parse query params
           if (query) {
             query.split('&').forEach(p => {
               const [k, v] = p.split('=');
@@ -228,7 +267,6 @@ function getLocalIP() {
 }
 
 async function handleAPI(path, params) {
-  // Login
   if (path === 'login') {
     const user = queryOne("SELECT * FROM users WHERE login = ?", [params.login]);
     if (!user) return { success: false, error: 'Пользователь не найден' };
@@ -237,7 +275,6 @@ async function handleAPI(path, params) {
     return { success: true, user: { id: user.id, login: user.login, role: user.role }, permissions: ROLE_PERMISSIONS[user.role] };
   }
   
-  // Get all data
   if (path === 'getData') {
     return {
       bots: queryAll("SELECT * FROM bots WHERE status = 'active'").map(b => ({ ...b, token: decrypt(b.token) })),
@@ -249,12 +286,10 @@ async function handleAPI(path, params) {
     };
   }
   
-  // Get groups
   if (path === 'getGroups') {
     return queryAll("SELECT g.*, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id WHERE g.status = 'active'");
   }
   
-  // Send message from web
   if (path === 'sendMessage') {
     const groupId = parseInt(params.groupId);
     const text = params.text;
@@ -277,7 +312,6 @@ async function handleAPI(path, params) {
         db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [groupId, text, 1, sender, 'sent']);
         saveDatabase();
         
-        // Уведомляем десктоп
         if (win && !win.isDestroyed()) {
           win.webContents.send('tg:incoming', { 
             groupId: groupId, 
@@ -296,33 +330,42 @@ async function handleAPI(path, params) {
     }
   }
   
-  // Get messages for group
   if (path === 'getMessages') {
     const groupId = parseInt(params.groupId);
     const lastId = parseInt(params.lastId) || 0;
-    
     let sql = "SELECT * FROM messages WHERE group_id = ?";
     const queryParams = [groupId];
-    
-    if (lastId > 0) {
-      sql += " AND id > ?";
-      queryParams.push(lastId);
-    }
-    
+    if (lastId > 0) { sql += " AND id > ?"; queryParams.push(lastId); }
     sql += " ORDER BY time ASC LIMIT 100";
-    
     return queryAll(sql, queryParams);
   }
   
-  // Get stats
-  if (path === 'getStats') {
-    return getStats();
+  // Excel export API
+  if (path === 'exportExcel') {
+    const type = params.type;
+    let items = [];
+    
+    if (type === 'messages') {
+      const groupId = parseInt(params.groupId);
+      items = queryAll("SELECT * FROM messages WHERE group_id = ? ORDER BY time DESC", [groupId]);
+    } else if (type === 'bots') {
+      items = queryAll("SELECT * FROM bots ORDER BY id");
+    } else if (type === 'groups') {
+      items = queryAll("SELECT g.*, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id ORDER BY g.id");
+    } else if (type === 'schedules') {
+      items = queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id ORDER BY s.id");
+    } else if (type === 'users') {
+      items = queryAll("SELECT * FROM users ORDER BY id");
+    } else if (type === 'activity') {
+      items = queryAll("SELECT a.*, u.login FROM activity_log a LEFT JOIN users u ON a.user_id = u.id ORDER BY a.created_at DESC LIMIT 500");
+    }
+    
+    const csv = generateExcel({ type, items });
+    return { success: true, csv: csv, filename: `hubpro_${type}_${new Date().toISOString().split('T')[0]}.csv` };
   }
   
-  // Get version
-  if (path === 'getVersion') {
-    return { version: VERSION, updates: UPDATE_INFO };
-  }
+  if (path === 'getStats') return getStats();
+  if (path === 'getVersion') return { version: VERSION, updates: UPDATE_INFO };
   
   return { error: 'Unknown API: ' + path };
 }
@@ -416,6 +459,31 @@ function registerIPCHandlers() {
   
   ipcMain.handle('data:export', async () => { try { return { success: true, data: { bots: queryAll("SELECT id, name, token, online, status, created_at FROM bots").map(b => ({...b, token: decrypt(b.token)})), groups: queryAll("SELECT g.id, g.name, g.chat_id, g.bot_id, g.topic_ids, g.status, g.created_at, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id"), schedules: queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id"), users: queryAll("SELECT id, login, role, status, created_at FROM users"), templates: queryAll("SELECT * FROM templates") } }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('data:import', async (_, { bots, groups, schedules, users, templates }) => { try { if (bots) for (const b of bots) if (b.name && b.token) try { db.run("INSERT OR IGNORE INTO bots (name, token, online, status) VALUES (?, ?, ?, ?)", [b.name, encrypt(b.token), b.online ? 1 : 0, b.status || 'active']); } catch(e) {} if (groups) for (const g of groups) if (g.name && g.chat_id && g.bot_id) try { db.run("INSERT OR IGNORE INTO groups (name, chat_id, bot_id, topic_ids, status) VALUES (?, ?, ?, ?, ?)", [g.name, g.chat_id, g.bot_id, g.topic_ids || null, g.status || 'active']); } catch(e) {} if (schedules) for (const s of schedules) if (s.name && s.text && s.group_id && s.bot_id) try { db.run("INSERT OR IGNORE INTO schedules (name, text, group_id, bot_id, scheduled_time, repeat_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)", [s.name, s.text, s.group_id, s.bot_id, s.scheduled_time, s.repeat_type || 'once', s.status || 'active']); } catch(e) {} if (templates) for (const t of templates) if (t.name && t.content) try { db.run("INSERT OR IGNORE INTO templates (name, content) VALUES (?, ?)", [t.name, t.content]); } catch(e) {} saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
+  
+  // Excel export handler
+  ipcMain.handle('data:exportExcel', async (_, { type, groupId }) => {
+    try {
+      let items = [];
+      if (type === 'messages' && groupId) {
+        items = queryAll("SELECT * FROM messages WHERE group_id = ? ORDER BY time DESC", [groupId]);
+      } else if (type === 'bots') {
+        items = queryAll("SELECT * FROM bots ORDER BY id");
+      } else if (type === 'groups') {
+        items = queryAll("SELECT g.*, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id ORDER BY g.id");
+      } else if (type === 'schedules') {
+        items = queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id ORDER BY s.id");
+      } else if (type === 'users') {
+        items = queryAll("SELECT * FROM users ORDER BY id");
+      } else if (type === 'activity') {
+        items = queryAll("SELECT a.*, u.login FROM activity_log a LEFT JOIN users u ON a.user_id = u.id ORDER BY a.created_at DESC LIMIT 500");
+      }
+      
+      const csv = generateExcel({ type, items });
+      return { success: true, csv, filename: `hubpro_${type}_${new Date().toISOString().split('T')[0]}.csv` };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
   
   ipcMain.handle('auth:login', (_, { login, password }) => { 
     const user = queryOne("SELECT * FROM users WHERE login = ?", [login]); 
@@ -639,7 +707,6 @@ async function executeSchedule(s) {
   saveDatabase(); 
 }
 
-// ============ AUTO UPDATER ============
 function setupAutoUpdater() {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
