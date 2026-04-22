@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkSchedule: () => ipcRenderer.invoke('app:checkSchedule'),
   reloadAll: () => ipcRenderer.invoke('app:reloadAll'),
   getMainAdmin: () => ipcRenderer.invoke('app:getMainAdmin'),
+  getWebPort: () => ipcRenderer.invoke('app:getWebPort'),
   exportData: () => ipcRenderer.invoke('data:export'),
   importData: (data) => ipcRenderer.invoke('data:import', data),
   login: (data) => ipcRenderer.invoke('auth:login', data),
