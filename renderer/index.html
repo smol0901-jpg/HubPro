@@ -28,6 +28,7 @@
     .modal-content { background: linear-gradient(135deg, #1e1e3f, #2d2d5a); border-radius: 20px; padding: 28px; max-width: 650px; width: 90%; max-height: 90vh; overflow-y: auto; border: 1px solid rgba(139,92,246,0.3); }
     .message-sent { background: linear-gradient(135deg, rgba(139,92,246,0.4), rgba(99,102,241,0.3)); margin-left: 20%; padding: 12px 18px; border-radius: 18px 18px 0 18px; }
     .message-received { background: rgba(255,255,255,0.15); margin-right: 20%; padding: 12px 18px; border-radius: 18px 18px 18px 0; }
+    .message-failed { background: rgba(239,68,68,0.3); margin-left: 20%; padding: 12px 18px; border-radius: 18px 18px 0 18px; border: 1px solid rgba(239,68,68,0.5); }
     .toast { position: fixed; bottom: 24px; right: 24px; padding: 14px 24px; border-radius: 12px; z-index: 1000; animation: slideIn 0.3s; font-weight: 500; }
     @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
     .badge { padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 500; }
@@ -44,6 +45,8 @@
     .checkbox-wrapper { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px; border-radius: 8px; transition: all 0.2s; }
     .checkbox-wrapper:hover { background: rgba(255,255,255,0.1); }
     .checkbox-wrapper input { width: 18px; height: 18px; accent-color: #8b5cf6; }
+    .chat-textarea { background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.15); color: white; padding: 12px 16px; border-radius: 10px; outline: none; transition: all 0.3s; resize: vertical; min-height: 80px; font-family: 'Inter', sans-serif; }
+    .chat-textarea:focus { border-color: #8b5cf6; box-shadow: 0 0 0 3px rgba(139,92,246,0.2); }
   </style>
 </head>
 <body class="text-white">
@@ -109,7 +112,7 @@
         <div class="flex justify-between items-center mb-6"><h2 class="text-3xl font-bold">💬 Чат</h2><button onclick="openMultiChatModal()" class="btn-primary">📢 Мультичат</button></div>
         <div class="flex gap-4 h-[calc(100vh-180px)]">
           <div class="w-72 glass rounded-2xl p-4 overflow-auto"><h3 class="font-bold mb-4 text-lg">Группы</h3><div id="chatGroupsList"></div></div>
-          <div class="flex-1 glass rounded-2xl flex flex-col"><div id="chatHeader" class="p-5 border-b border-white/10 font-bold text-lg"></div><div id="chatMessages" class="flex-1 p-5 overflow-auto space-y-3"></div><div class="p-5 border-t border-white/10 flex gap-3"><input type="text" id="chatInput" class="input-field flex-1" placeholder="Введите сообщение..."><button onclick="sendMessage()" class="btn-primary">Отправить</button></div></div>
+          <div class="flex-1 glass rounded-2xl flex flex-col"><div id="chatHeader" class="p-5 border-b border-white/10 font-bold text-lg"></div><div id="chatMessages" class="flex-1 p-5 overflow-auto space-y-3"></div><div class="p-5 border-t border-white/10"><textarea id="chatInput" class="chat-textarea w-full" placeholder="Введите сообщение (можно несколько строк)..."></textarea><div class="flex gap-3 mt-3"><button onclick="sendMessage()" class="btn-primary flex-1">Отправить</button></div></div></div>
         </div>
       </div>
 
@@ -130,7 +133,6 @@
         <div class="flex justify-between items-center mb-8"><h2 class="text-3xl font-bold">👤 Пользователи</h2><button id="addUserBtn" onclick="openAddUserModal()" class="btn-primary hidden">➕ Добавить</button></div>
         <div id="usersList" class="grid grid-cols-3 gap-4"></div>
       </div>
-
       <!-- Notifications -->
       <div id="notifications" class="section hidden">
         <div class="flex justify-between items-center mb-8"><h2 class="text-3xl font-bold">🔔 Уведомления</h2><button onclick="openSupportModal()" class="btn-primary">📨 Написать</button></div>
@@ -165,7 +167,6 @@
 
   <div id="modal" class="modal"><div class="modal-content"><h3 id="modalTitle" class="text-2xl font-bold mb-6"></h3><div id="modalBody"></div><div class="flex gap-3 mt-8 justify-end"><button onclick="closeModal()" class="btn-secondary">Отмена</button><button id="modalSaveBtn" class="btn-primary"></button></div></div></div>
   <div id="toast" class="toast hidden"></div>
-
   <script>
     let currentUser = null, permissions = null, bots = [], groups = [], messages = [], schedules = [], users = [], templates = [], aiLogs = [], aiAlerts = [];
     let currentChatGroup = null, messageChart = null, activityChart = null, mainAdminLogin = 'NeuralAP';
@@ -371,34 +372,34 @@
         const isMainAdmin = u.login === mainAdminLogin;
         const isSelf = u.id === currentUser.id; 
         const isAdminUser = u.role === 'admin'; 
-        return `<div class="glass p-5 rounded-2xl"><div class="flex justify-between items-start mb-3"><div class="font-bold text-lg">${escapeHtml(u.login)}${isMainAdmin ? ' 👑' : ''}</div><span class="badge ${u.role === 'admin' ? 'bg-purple-500/20 text-purple-400' : u.role === 'helper' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-blue-500/20 text-blue-400'}">${u.role === 'admin' ? '👑' : u.role === 'helper' ? '🔧' : '👤'}</span></div><div class="text-sm text-slate-400 mb-3">Статус: <span class="${u.status === 'active' ? 'text-green-400' : 'text-red-400'}">${u.status === 'active' ? 'Активен' : 'Заблокирован'}</span></div><div class="flex gap-2 flex-wrap">${!isMainAdmin && !isAdminUser ? `<button onclick="toggleUserStatus(${u.id}, '${u.status === 'active' ? 'inactive' : 'active'}')" class="btn-secondary text-sm py-2 px-3">${u.status === 'active' ? '🔴' : '🟢'}</button>` : ''}${!isSelf && !isMainAdmin && !isAdminUser ? `<button onclick="editUser(${u.id})" class="btn-secondary text-sm py-2 px-3">🔐</button>` : ''}${isAdmin && !isSelf && !isMainAdmin ? `<button onclick="deleteUser(${u.id})" class="btn-secondary text-sm py-2 px-3">🗑️</button>` : ''}</div></div>`; 
+        return `<div class="glass p-5 rounded-2xl"><div class="flex justify-between items-start mb-3"><div class="font-bold text-lg">${escapeHtml(u.login)}${isMainAdmin ? ' 👑' : ''}</div><span class="badge ${u.role === 'admin' ? 'bg-purple-500/20 text-purple-400' : u.role === 'helper' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-blue-500/20 text-blue-400'}">${u.role === 'admin' ? '👑' : u.role === 'helper' ? '🔧' : '👤'}</span></div><div class="text-sm text-slate-400 mb-3">Статус: <span class="${u.status === 'active' ? 'text-green-400' : 'text-red-400'}">${u.status === 'active' ? 'Активен' : 'Заблокирован'}</span></div><div class="flex gap-2 flex-wrap">${!isMainAdmin ? `<button onclick="toggleUserStatus(${u.id}, '${u.status === 'active' ? 'inactive' : 'active'}')" class="btn-secondary text-sm py-2 px-3">${u.status === 'active' ? '🔴' : '🟢'}</button>` : ''}${!isSelf ? `<button onclick="editUser(${u.id})" class="btn-secondary text-sm py-2 px-3">🔐</button>` : ''}${isAdmin && !isSelf && !isMainAdmin ? `<button onclick="deleteUser(${u.id})" class="btn-secondary text-sm py-2 px-3">🗑️</button>` : ''}</div></div>`; 
       }).join('') || '<div class="text-slate-400 text-lg">Нет пользователей</div>';
     }
 
     function editUser(id) {
-      document.getElementById('modalTitle').textContent = '🔐 Сменить пароль';
-      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Новый пароль</label><input type="password" id="userNewPassword" class="input-field w-full"></div></div>`;
-      document.getElementById('modalSaveBtn').onclick = () => saveUserPassword(id);
+      document.getElementById('modalTitle').textContent = '🔐 Редактировать пользователя';
+      document.getElementById('modalBody').innerHTML = `<div class="space-y-4"><div><label class="block text-sm text-slate-400 mb-2">Логин</label><input type="text" id="userNewLogin" class="input-field w-full" placeholder="Новый логин"></div><div><label class="block text-sm text-slate-400 mb-2">Пароль (оставьте пустым)</label><input type="password" id="userNewPassword" class="input-field w-full"></div></div>`;
+      document.getElementById('modalSaveBtn').onclick = () => saveUserEdit(id);
       openModal();
     }
 
-    async function saveUserPassword(id) {
+    async function saveUserEdit(id) {
+      const login = document.getElementById('userNewLogin').value.trim();
       const password = document.getElementById('userNewPassword').value;
-      if (!password) return showToast('Введите пароль', 'error');
-      const result = await window.electronAPI.updateUser({ id, password, currentUserId: currentUser.id, currentUserRole: currentUser.role });
-      if (result.success) { showToast('✅ Пароль изменён!'); closeModal(); await loadData(); }
+      const result = await window.electronAPI.updateUser({ id, login, password, currentUserId: currentUser.id, currentUserRole: currentUser.role });
+      if (result.success) { showToast('✅ Обновлено!'); closeModal(); await loadData(); }
       else showToast('❌ ' + result.error, 'error');
     }
 
     async function toggleUserStatus(id, status) {
-      const result = await window.electronAPI.toggleUserStatus({ id, status, currentUserRole: currentUser.role });
+      const result = await window.electronAPI.toggleUserStatus({ id, status, currentUserRole: currentUser.role, currentUserId: currentUser.id });
       if (result.success) { showToast(status === 'active' ? '✅ Разблокирован' : '🔴 Заблокирован'); await loadData(); }
       else showToast('❌ ' + result.error, 'error');
     }
 
     async function deleteUser(id) {
       if (!confirm('Удалить пользователя?')) return;
-      const result = await window.electronAPI.deleteUser({ id, currentUserRole: currentUser.role });
+      const result = await window.electronAPI.deleteUser({ id, currentUserRole: currentUser.role, currentUserId: currentUser.id });
       if (result.success) { showToast('✅ Удалён'); await loadData(); }
       else showToast('❌ ' + result.error, 'error');
     }
@@ -416,18 +417,51 @@
     }
 
     function renderChatMessages() {
-      document.getElementById('chatMessages').innerHTML = messages.map(m => `<div class="${m.sent ? 'message-sent' : 'message-received'}"><div class="text-xs text-slate-400 mb-2">${m.sender || ''} • ${new Date(m.time).toLocaleTimeString()} • <span class="${m.status === 'sent' ? 'text-green-400' : m.status === 'failed' ? 'text-red-400' : 'text-blue-400'}">${m.status === 'sent' ? '✓✓' : m.status === 'failed' ? '✗' : '↓'}</span></div><div>${escapeHtml(m.text)}</div></div>`).join('');
+      document.getElementById('chatMessages').innerHTML = messages.map(m => {
+        let msgClass = m.sent ? 'message-sent' : 'message-received';
+        if (m.status === 'failed') msgClass = 'message-failed';
+        
+        let buttons = '';
+        if (m.status === 'failed') {
+          buttons = `<button onclick="resendMessage(${m.id})" class="btn-orange text-xs py-1 px-2 mt-2">🔄 Повторить</button>`;
+        }
+        
+        return `<div class="${msgClass}"><div class="text-xs text-slate-400 mb-2">${m.sender || ''} • ${new Date(m.time).toLocaleTimeString()} • <span class="${m.status === 'sent' ? 'text-green-400' : m.status === 'failed' ? 'text-red-400' : 'text-blue-400'}">${m.status === 'sent' ? '✓✓' : m.status === 'failed' ? '✗' : '↓'}</span></div><div>${escapeHtml(m.text)}</div>${buttons}</div>`;
+      }).join('');
       document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
+    }
+
+    async function resendMessage(msgId) {
+      const msg = messages.find(m => m.id === msgId);
+      if (!msg || !currentChatGroup) return;
+      
+      const bot = bots.find(b => b.id === currentChatGroup.bot_id);
+      if (!bot) return showToast('Выберите бота в группе!', 'error');
+      
+      const topicIds = currentChatGroup.topic_ids ? currentChatGroup.topic_ids.split(',').map(t => t.trim()) : null;
+      const result = await window.electronAPI.sendTelegramMessage({ token: bot.token, chatId: currentChatGroup.chat_id, text: msg.text, topicIds });
+      
+      if (result.ok) {
+        await window.electronAPI.addMessage({ groupId: currentChatGroup.id, text: msg.text, sent: 1, sender: currentUser.login, status: 'sent' });
+        showToast('✅ Отправлено');
+        await selectChatGroup(currentChatGroup.id);
+        await loadData();
+      } else {
+        showToast('❌ ' + (result.description || 'Ошибка'), 'error');
+      }
     }
 
     async function sendMessage() {
       if (!currentChatGroup) return showToast('Выберите группу', 'error');
       const text = document.getElementById('chatInput').value.trim();
       if (!text) return;
+      
       const bot = bots.find(b => b.id === currentChatGroup.bot_id);
       if (!bot) return showToast('Выберите бота в группе!', 'error');
+      
       const topicIds = currentChatGroup.topic_ids ? currentChatGroup.topic_ids.split(',').map(t => t.trim()) : null;
       const result = await window.electronAPI.sendTelegramMessage({ token: bot.token, chatId: currentChatGroup.chat_id, text, topicIds });
+      
       if (result.ok) {
         await window.electronAPI.addMessage({ groupId: currentChatGroup.id, text, sent: 1, sender: currentUser.login, status: 'sent' });
         showToast('✅ Отправлено');
@@ -698,7 +732,7 @@
       showToast(data.success ? '✅ Выполнено' : '❌ Ошибка', data.success ? 'success' : 'error');
       loadData();
     });
-    document.getElementById('chatInput').addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
+    document.getElementById('chatInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
   </script>
 </body>
 </html>
