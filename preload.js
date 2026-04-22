@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getWebPort: () => ipcRenderer.invoke('app:getWebPort'),
   exportData: () => ipcRenderer.invoke('data:export'),
   importData: (data) => ipcRenderer.invoke('data:import', data),
+  exportExcel: (type, groupId) => ipcRenderer.invoke('data:exportExcel', { type, groupId }),
   login: (data) => ipcRenderer.invoke('auth:login', data),
   getUsers: () => ipcRenderer.invoke('auth:getUsers'),
   addUser: (data) => ipcRenderer.invoke('auth:addUser', data),
