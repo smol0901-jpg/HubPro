@@ -5,10 +5,10 @@ const fs = require('fs');
 const crypto = require('crypto');
 const http = require('http');
 
-const VERSION = '2.0.0';
+const VERSION = '2.0.1';
 const UPDATE_INFO = [
-  { version: '2.0.0', date: '2026-04-22', changes: ['Веб-интерфейс', 'Доступ с телефона', 'Автообновление'] },
-  { version: '1.9.1', date: '2026-04-21', changes: ['Защита NeuralAP', 'Редактирование расписания'] }
+  { version: '2.0.1', date: '2026-04-22', changes: ['Исправлен чат', 'Многострочный ввод', 'Повторная отправка', 'Удаление админов'] },
+  { version: '2.0.0', date: '2026-04-22', changes: ['Веб-интерфейс', 'Автообновление'] }
 ];
 
 let win, tray, pollingIntervals = {}, botOffsets = {}, db, scheduleIntervals = [], SQL;
@@ -141,7 +141,6 @@ function startWebServer(port = WEB_PORT) {
   }
   
   webServer = http.createServer(async (req, res) => {
-    // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -154,7 +153,6 @@ function startWebServer(port = WEB_PORT) {
     
     const url = req.url.split('?')[0];
     
-    // API endpoints
     if (url.startsWith('/api/')) {
       const apiPath = url.replace('/api/', '');
       let body = '';
@@ -172,14 +170,12 @@ function startWebServer(port = WEB_PORT) {
       return;
     }
     
-    // Serve HTML
     if (url === '/' || url === '/index.html') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(htmlContent);
       return;
     }
     
-    // Static files
     const filePath = path.join(__dirname, 'renderer', url);
     if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
       const ext = path.extname(filePath);
@@ -378,29 +374,35 @@ function registerIPCHandlers() {
   ipcMain.handle('auth:updateUser', (_, { id, login, password, currentUserId, currentUserRole }) => { 
     const targetUser = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
     if (!targetUser) return { success: false, error: 'Пользователь не найден' }; 
+    // Главный админ защищён
     if (targetUser.login === MAIN_ADMIN_LOGIN) return { success: false, error: 'Главный админ защищён' };
-    if (password && targetUser.role === 'admin' && id !== currentUserId) { AIMonitor.log('SECURITY_ALERT', currentUserId, `Попытка смены пароля админа ${targetUser.login}`, 'critical'); return { success: false, error: 'Запрещено AI' }; } 
-    if (id !== currentUserId && currentUserRole !== 'admin') return { success: false, error: 'Нет прав' }; 
+    // Разрешаем редактирование других админов
     if (login) { const exists = queryOne("SELECT id FROM users WHERE login = ? AND id != ?", [login, id]); if (exists) return { success: false, error: 'Логин занят' }; runSql("UPDATE users SET login = ? WHERE id = ?", [login, id]); logActivity(currentUserId, 'CHANGE_LOGIN', `Смена логина ${id}`); } 
     if (password) { runSql("UPDATE users SET password = ? WHERE id = ?", [hashPassword(password), id]); logActivity(currentUserId, 'CHANGE_PASSWORD', `Смена пароля ${id}`); } 
     return { success: true }; 
   });
-  ipcMain.handle('auth:deleteUser', (_, { id, currentUserRole }) => { 
+  ipcMain.handle('auth:deleteUser', (_, { id, currentUserRole, currentUserId }) => { 
     if (currentUserRole !== 'admin') return { success: false, error: 'Нет прав' }; 
     const target = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
-    if (target?.login === MAIN_ADMIN_LOGIN) { AIMonitor.log('SECURITY_ALERT', null, 'Попытка удаления главного админа', 'critical'); return { success: false, error: 'Главный админ защищён и не может быть удалён' }; }
-    if (target?.role === 'admin') { AIMonitor.log('SECURITY_ALERT', null, 'Попытка удаления админа', 'critical'); return { success: false, error: 'Защищено AI' }; } 
-    AIMonitor.log('DELETE_USER', null, `Удалён пользователь ${id}`, 'high'); 
+    // Главный админ защищён
+    if (target?.login === MAIN_ADMIN_LOGIN) { AIMonitor.log('SECURITY_ALERT', null, 'Попытка удаления главного админа', 'critical'); return { success: false, error: 'Главный админ защищён' }; }
+    // Нельзя удалить самого себя
+    if (id === currentUserId) return { success: false, error: 'Нельзя удалить себя' };
+    // Разрешаем удаление других админов
+    AIMonitor.log('DELETE_USER', null, `Удалён пользователь ${id}`, 'medium'); 
     logActivity(null, 'DELETE_USER', `Удалён пользователь ${id}`); 
     const result = runSql("DELETE FROM users WHERE id = ?", [id]);
     if (result.success) syncPolling(queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"), queryAll("SELECT * FROM groups WHERE status = 'active'"));
     return result; 
   });
-  ipcMain.handle('auth:toggleUserStatus', (_, { id, status, currentUserRole }) => { 
+  ipcMain.handle('auth:toggleUserStatus', (_, { id, status, currentUserRole, currentUserId }) => { 
     if (currentUserRole !== 'admin' && currentUserRole !== 'helper') return { success: false, error: 'Нет прав' }; 
     const target = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
+    // Главный админ защищён
     if (target?.login === MAIN_ADMIN_LOGIN) return { success: false, error: 'Главный админ защищён' };
-    if (target?.role === 'admin') { AIMonitor.log('SECURITY_ALERT', null, 'Попытка блокировки админа', 'critical'); return { success: false, error: 'Защищено AI' }; } 
+    // Нельзя заблокировать самого себя
+    if (id === currentUserId) return { success: false, error: 'Нельзя заблокировать себя' };
+    // Разрешаем блокировку других админов
     AIMonitor.log(status === 'active' ? 'UNBLOCK_USER' : 'BLOCK_USER', null, `Пользователь ${id}: ${status}`, status === 'inactive' ? 'medium' : 'low'); 
     logActivity(null, status === 'active' ? 'UNBLOCK_USER' : 'BLOCK_USER', `Пользователь ${id}: ${status}`); 
     return runSql("UPDATE users SET status = ? WHERE id = ?", [status, id]); 
@@ -589,50 +591,24 @@ async function executeSchedule(s) {
 function setupAutoUpdater() {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
-  
-  // Настройка GitHub
   autoUpdater.logger = require('electron-log');
   autoUpdater.feedUrl = 'https://github.com/smol0901-jpg/HubPro/releases/latest';
   
-  autoUpdater.on('checking-for-update', () => {
-    console.log('Проверка обновлений...');
-  });
-  
+  autoUpdater.on('checking-for-update', () => { console.log('Проверка обновлений...'); });
   autoUpdater.on('update-available', (info) => {
     console.log('Доступно обновление:', info.version);
     if (win?.webContents) win.webContents.send('update-available', info);
     showNotification('HubPro', `Доступно обновление v${info.version}`);
   });
-  
-  autoUpdater.on('update-not-available', () => {
-    console.log('Обновлений нет');
-  });
-  
-  autoUpdater.on('download-progress', (progress) => {
-    console.log(`Загрузка: ${progress.percent.toFixed(1)}%`);
-  });
-  
+  autoUpdater.on('update-not-available', () => { console.log('Обновлений нет'); });
+  autoUpdater.on('download-progress', (progress) => { console.log(`Загрузка: ${progress.percent.toFixed(1)}%`); });
   autoUpdater.on('update-downloaded', (info) => {
-    console.log('Обновление загружено:', info.version);
     if (win?.webContents) win.webContents.send('update-downloaded', info);
-    dialog.showMessageBox(win, {
-      type: 'info',
-      title: 'Обновление',
-      message: `Загружена версия ${info.version}. Перезапустить?`,
-      buttons: ['Да', 'Нет']
-    }).then(r => {
-      if (r.response === 0) autoUpdater.quitAndInstall();
-    });
+    dialog.showMessageBox(win, { type: 'info', title: 'Обновление', message: `Загружена версия ${info.version}. Перезапустить?`, buttons: ['Да', 'Нет'] }).then(r => { if (r.response === 0) autoUpdater.quitAndInstall(); });
   });
+  autoUpdater.on('error', (e) => { console.error('Ошибка обновления:', e); });
   
-  autoUpdater.on('error', (e) => {
-    console.error('Ошибка обновления:', e);
-  });
-  
-  // Проверка при запуске (только для упакованной версии)
-  if (app.isPackaged) {
-    autoUpdater.checkForUpdatesAndNotify();
-  }
+  if (app.isPackaged) autoUpdater.checkForUpdatesAndNotify();
 }
 
 autoUpdater.autoDownload = true; autoUpdater.autoInstallOnAppQuit = true;
