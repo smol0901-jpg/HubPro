@@ -5,10 +5,10 @@ const fs = require('fs');
 const crypto = require('crypto');
 const http = require('http');
 
-const VERSION = '2.0.1';
+const VERSION = '2.1.0';
 const UPDATE_INFO = [
-  { version: '2.0.1', date: '2026-04-22', changes: ['Исправлен чат', 'Многострочный ввод', 'Повторная отправка', 'Удаление админов'] },
-  { version: '2.0.0', date: '2026-04-22', changes: ['Веб-интерфейс', 'Автообновление'] }
+  { version: '2.1.0', date: '2026-04-22', changes: ['Веб-синхронизация', 'API для сообщений', 'Автообновление чата'] },
+  { version: '2.0.1', date: '2026-04-22', changes: ['Многострочный ввод', 'Повторная отправка', 'Удаление админов'] }
 ];
 
 let win, tray, pollingIntervals = {}, botOffsets = {}, db, scheduleIntervals = [], SQL;
@@ -67,6 +67,7 @@ const ROLE_PERMISSIONS = {
   helper: { tabs: ['users', 'notifications', 'settings'] },
   user: { tabs: ['dashboard', 'chat', 'notifications', 'settings'] }
 };
+
 
 async function initDatabase() {
   const initSqlJs = require('sql.js');
@@ -152,6 +153,7 @@ function startWebServer(port = WEB_PORT) {
     }
     
     const url = req.url.split('?')[0];
+    const query = req.url.includes('?') ? req.url.split('?')[1] : '';
     
     if (url.startsWith('/api/')) {
       const apiPath = url.replace('/api/', '');
@@ -159,7 +161,16 @@ function startWebServer(port = WEB_PORT) {
       req.on('data', chunk => body += chunk);
       req.on('end', async () => {
         try {
-          const result = await handleAPI(apiPath, body);
+          let params = {};
+          if (body) params = JSON.parse(body);
+          // Parse query params
+          if (query) {
+            query.split('&').forEach(p => {
+              const [k, v] = p.split('=');
+              if (k) params[k] = decodeURIComponent(v || '');
+            });
+          }
+          const result = await handleAPI(apiPath, params);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(result));
         } catch (e) {
@@ -216,9 +227,8 @@ function getLocalIP() {
   return 'localhost';
 }
 
-async function handleAPI(path, body) {
-  const params = body ? JSON.parse(body) : {};
-  
+async function handleAPI(path, params) {
+  // Login
   if (path === 'login') {
     const user = queryOne("SELECT * FROM users WHERE login = ?", [params.login]);
     if (!user) return { success: false, error: 'Пользователь не найден' };
@@ -227,10 +237,11 @@ async function handleAPI(path, body) {
     return { success: true, user: { id: user.id, login: user.login, role: user.role }, permissions: ROLE_PERMISSIONS[user.role] };
   }
   
+  // Get all data
   if (path === 'getData') {
     return {
-      bots: queryAll("SELECT * FROM bots").map(b => ({ ...b, token: decrypt(b.token) })),
-      groups: queryAll("SELECT g.*, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id"),
+      bots: queryAll("SELECT * FROM bots WHERE status = 'active'").map(b => ({ ...b, token: decrypt(b.token) })),
+      groups: queryAll("SELECT g.*, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id WHERE g.status = 'active'"),
       schedules: queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id"),
       users: queryAll("SELECT id, login, role, status, created_at FROM users"),
       templates: queryAll("SELECT * FROM templates"),
@@ -238,35 +249,82 @@ async function handleAPI(path, body) {
     };
   }
   
+  // Get groups
+  if (path === 'getGroups') {
+    return queryAll("SELECT g.*, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id WHERE g.status = 'active'");
+  }
+  
+  // Send message from web
   if (path === 'sendMessage') {
-    const bot = queryOne("SELECT * FROM bots WHERE id = ?", [params.botId]);
-    const group = queryOne("SELECT * FROM groups WHERE id = ?", [params.groupId]);
-    if (!bot || !group) return { success: false, error: 'Бот или группа не найдены' };
+    const groupId = parseInt(params.groupId);
+    const text = params.text;
+    const sender = params.sender || 'Web';
     
-    const token = decrypt(bot.token);
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: group.chat_id, text: params.text, parse_mode: 'HTML' })
-    });
-    const result = await res.json();
-    if (result.ok) {
-      db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [params.groupId, params.text, 1, params.sender || 'web', 'sent']);
-      saveDatabase();
-      return { success: true };
+    const group = queryOne("SELECT g.*, b.token as bot_token FROM groups g LEFT JOIN bots b ON g.bot_id = b.id WHERE g.id = ?", [groupId]);
+    if (!group) return { success: false, error: 'Группа не найдена' };
+    if (!group.bot_token) return { success: false, error: 'Бот не назначен' };
+    
+    const token = decrypt(group.bot_token);
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: group.chat_id, text, parse_mode: 'HTML' })
+      });
+      const result = await res.json();
+      
+      if (result.ok) {
+        db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [groupId, text, 1, sender, 'sent']);
+        saveDatabase();
+        
+        // Уведомляем десктоп
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('tg:incoming', { 
+            groupId: groupId, 
+            text: text, 
+            time: Date.now(), 
+            sender: sender,
+            fromWeb: true
+          });
+        }
+        
+        return { success: true, message: 'Отправлено' };
+      }
+      return { success: false, error: result.description };
+    } catch (e) {
+      return { success: false, error: e.message };
     }
-    return { success: false, error: result.description };
   }
   
+  // Get messages for group
   if (path === 'getMessages') {
-    return queryAll("SELECT * FROM messages WHERE group_id = ? ORDER BY time DESC LIMIT 100", [params.groupId]).reverse();
+    const groupId = parseInt(params.groupId);
+    const lastId = parseInt(params.lastId) || 0;
+    
+    let sql = "SELECT * FROM messages WHERE group_id = ?";
+    const queryParams = [groupId];
+    
+    if (lastId > 0) {
+      sql += " AND id > ?";
+      queryParams.push(lastId);
+    }
+    
+    sql += " ORDER BY time ASC LIMIT 100";
+    
+    return queryAll(sql, queryParams);
   }
   
+  // Get stats
+  if (path === 'getStats') {
+    return getStats();
+  }
+  
+  // Get version
   if (path === 'getVersion') {
     return { version: VERSION, updates: UPDATE_INFO };
   }
   
-  return { error: 'Unknown API' };
+  return { error: 'Unknown API: ' + path };
 }
 
 
@@ -308,6 +366,8 @@ function startWebhookServer(port = WEBHOOK_PORT) {
               if (group) {
                 db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", 
                   [group.id, update.message.text, 0, update.message.from.first_name || update.message.from.username, 'received']);
+                saveDatabase();
+                
                 if (win && !win.isDestroyed()) {
                   win.webContents.send('tg:incoming', { 
                     groupId: group.id, 
@@ -374,9 +434,7 @@ function registerIPCHandlers() {
   ipcMain.handle('auth:updateUser', (_, { id, login, password, currentUserId, currentUserRole }) => { 
     const targetUser = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
     if (!targetUser) return { success: false, error: 'Пользователь не найден' }; 
-    // Главный админ защищён
     if (targetUser.login === MAIN_ADMIN_LOGIN) return { success: false, error: 'Главный админ защищён' };
-    // Разрешаем редактирование других админов
     if (login) { const exists = queryOne("SELECT id FROM users WHERE login = ? AND id != ?", [login, id]); if (exists) return { success: false, error: 'Логин занят' }; runSql("UPDATE users SET login = ? WHERE id = ?", [login, id]); logActivity(currentUserId, 'CHANGE_LOGIN', `Смена логина ${id}`); } 
     if (password) { runSql("UPDATE users SET password = ? WHERE id = ?", [hashPassword(password), id]); logActivity(currentUserId, 'CHANGE_PASSWORD', `Смена пароля ${id}`); } 
     return { success: true }; 
@@ -384,11 +442,8 @@ function registerIPCHandlers() {
   ipcMain.handle('auth:deleteUser', (_, { id, currentUserRole, currentUserId }) => { 
     if (currentUserRole !== 'admin') return { success: false, error: 'Нет прав' }; 
     const target = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
-    // Главный админ защищён
     if (target?.login === MAIN_ADMIN_LOGIN) { AIMonitor.log('SECURITY_ALERT', null, 'Попытка удаления главного админа', 'critical'); return { success: false, error: 'Главный админ защищён' }; }
-    // Нельзя удалить самого себя
     if (id === currentUserId) return { success: false, error: 'Нельзя удалить себя' };
-    // Разрешаем удаление других админов
     AIMonitor.log('DELETE_USER', null, `Удалён пользователь ${id}`, 'medium'); 
     logActivity(null, 'DELETE_USER', `Удалён пользователь ${id}`); 
     const result = runSql("DELETE FROM users WHERE id = ?", [id]);
@@ -398,11 +453,8 @@ function registerIPCHandlers() {
   ipcMain.handle('auth:toggleUserStatus', (_, { id, status, currentUserRole, currentUserId }) => { 
     if (currentUserRole !== 'admin' && currentUserRole !== 'helper') return { success: false, error: 'Нет прав' }; 
     const target = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
-    // Главный админ защищён
     if (target?.login === MAIN_ADMIN_LOGIN) return { success: false, error: 'Главный админ защищён' };
-    // Нельзя заблокировать самого себя
     if (id === currentUserId) return { success: false, error: 'Нельзя заблокировать себя' };
-    // Разрешаем блокировку других админов
     AIMonitor.log(status === 'active' ? 'UNBLOCK_USER' : 'BLOCK_USER', null, `Пользователь ${id}: ${status}`, status === 'inactive' ? 'medium' : 'low'); 
     logActivity(null, status === 'active' ? 'UNBLOCK_USER' : 'BLOCK_USER', `Пользователь ${id}: ${status}`); 
     return runSql("UPDATE users SET status = ? WHERE id = ?", [status, id]); 
@@ -690,6 +742,7 @@ function syncPolling(bots, groups) {
             const g = groups.find(g => g.bot_id === bot.id && g.chat_id === u.message.chat.id.toString()); 
             if (g) { 
               db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [g.id, u.message.text, 0, u.message.from.first_name || u.message.from.username, 'received']); 
+              saveDatabase();
               if (win && !win.isDestroyed()) win.webContents.send('tg:incoming', { groupId: g.id, text: u.message.text, time: u.message.date * 1000, sender: u.message.from.first_name || u.message.from.username }); 
             } 
           } 
