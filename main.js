@@ -5,19 +5,21 @@ const fs = require('fs');
 const crypto = require('crypto');
 const http = require('http');
 
-const VERSION = '2.2.1';
+const VERSION = '2.2.2';
 const UPDATE_INFO = [
-  { version: '2.2.1', date: '2026-04-23', changes: ['Исправлено время', 'Исправлена отправка', 'Веб-вкладка', 'Инструкция'] },
-  { version: '2.2.0', date: '2026-04-22', changes: ['Excel экспорт'] }
+  { version: '2.2.2', date: '2026-04-23', changes: ['Исправлено время', 'Веб-сервер', 'Настройки веба'] },
+  { version: '2.2.1', date: '2026-04-23', changes: ['Синхронизация времени'] }
 ];
 
 let win, tray, pollingIntervals = {}, botOffsets = {}, db, scheduleIntervals = [], SQL;
 let webhookServer = null, webServer = null;
 const WEBHOOK_PORT = 3001;
-const WEB_PORT = 8080;
 const MAIN_ADMIN_LOGIN = 'NeuralAP';
 
-// Используем локальную временную зону
+// Динамический порт веб-сервера
+let WEB_PORT = 8080;
+
+// Определяем часовой пояс
 const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Moscow';
 
 const ENCRYPTION_KEY = crypto.scryptSync(app.getPath('userData'), 'hubpro-salt', 32);
@@ -54,13 +56,30 @@ function encrypt(text) { if (!text) return text; const iv = crypto.randomBytes(I
 function decrypt(text) { if (!text || !text.includes(':')) return text; try { const parts = text.split(':'); const iv = Buffer.from(parts[0], 'hex'); const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv); let decrypted = decipher.update(parts[1], 'hex', 'utf8'); decrypted += decipher.final('utf8'); return decrypted; } catch (e) { return text; } }
 function hashPassword(password) { return crypto.createHash('sha256').update(password).digest('hex'); }
 
-// Получить текущее время с учетом локальной зоны
+// Получить локальное время с учетом часового пояса
 function getLocalTime() {
-  return new Date().toLocaleString('ru-RU', { timeZone: LOCAL_TZ });
+  return new Date().toLocaleString('ru-RU', { 
+    timeZone: LOCAL_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
 }
 
-function getLocalTimestamp() {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: 'UTC' })).getTime();
+// Форматировать время для сообщений
+function formatMessageTime(timestamp) {
+  const date = new Date(timestamp);
+  return date.toLocaleString('ru-RU', { 
+    timeZone: LOCAL_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
 function showNotification(title, body) {
@@ -117,9 +136,16 @@ async function initDatabase() {
   const help = queryOne("SELECT id FROM users WHERE login = 'HelpNeural'");
   if (!help) db.run("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", ['HelpNeural', hashPassword('admin000'), 'helper', 'active']);
   
+  // Загружаем настройки веб-порта
+  const webPortSetting = queryOne("SELECT value FROM settings WHERE key = 'web_port'");
+  if (webPortSetting) {
+    WEB_PORT = parseInt(webPortSetting.value) || 8080;
+  }
+  
   saveDatabase();
   console.log('Database:', dbPath);
   console.log('Timezone:', LOCAL_TZ);
+  console.log('Web Port:', WEB_PORT);
   return db;
 }
 
@@ -151,7 +177,7 @@ function generateExcel(data) {
   if (data.type === 'messages') {
     csv = 'ID,Время,Текст,Отправитель,Статус,Тип\n';
     data.items.forEach(m => {
-      csv += `${m.id},"${m.time}","${(m.text || '').replace(/"/g, '""')}","${m.sender || ''}","${m.status}","${m.sent ? 'Отправлено' : 'Получено'}"\n`;
+      csv += `${m.id},"${formatMessageTime(m.time)}","${(m.text || '').replace(/"/g, '""')}","${m.sender || ''}","${m.status}","${m.sent ? 'Отправлено' : 'Получено'}"\n`;
     });
   } else if (data.type === 'bots') {
     csv = 'ID,Название,Статус,Дата создания\n';
@@ -184,8 +210,11 @@ function generateExcel(data) {
 }
 
 // ============ WEB SERVER ============
-function startWebServer(port = WEB_PORT) {
-  if (webServer) return;
+function startWebServer(port) {
+  if (webServer) {
+    console.log('Веб-сервер уже запущен на порту', port);
+    return;
+  }
   
   const htmlPath = path.join(__dirname, 'renderer', 'index.html');
   let htmlContent = '';
@@ -254,7 +283,8 @@ function startWebServer(port = WEB_PORT) {
   webServer.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
       console.log(`Порт ${port} занят, пробую ${port + 1}`);
-      startWebServer(port + 1);
+      WEB_PORT = port + 1;
+      startWebServer(WEB_PORT);
     }
   });
   
@@ -321,7 +351,8 @@ async function handleAPI(path, params) {
       const result = await res.json();
       
       if (result.ok) {
-        db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [groupId, text, 1, sender, 'sent']);
+        const now = new Date().toISOString();
+        db.run("INSERT INTO messages (group_id, text, sent, sender, status, time) VALUES (?, ?, ?, ?, ?, ?)", [groupId, text, 1, sender, 'sent', now]);
         saveDatabase();
         
         if (win && !win.isDestroyed()) {
@@ -378,6 +409,7 @@ async function handleAPI(path, params) {
   if (path === 'getStats') return getStats();
   if (path === 'getVersion') return { version: VERSION, updates: UPDATE_INFO, timezone: LOCAL_TZ };
   if (path === 'getTime') return { time: getLocalTime(), timestamp: Date.now(), timezone: LOCAL_TZ };
+  if (path === 'getWebConfig') return { port: WEB_PORT, ip: getLocalIP(), timezone: LOCAL_TZ };
   
   return { error: 'Unknown API: ' + path };
 }
@@ -419,8 +451,9 @@ function startWebhookServer(port = WEBHOOK_PORT) {
               const groups = queryAll("SELECT * FROM groups WHERE bot_id = ? AND status = 'active'", [bot.id]);
               const group = groups.find(g => g.chat_id === update.message.chat.id.toString());
               if (group) {
-                db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", 
-                  [group.id, update.message.text, 0, update.message.from.first_name || update.message.from.username, 'received']);
+                const now = new Date().toISOString();
+                db.run("INSERT INTO messages (group_id, text, sent, sender, status, time) VALUES (?, ?, ?, ?, ?, ?)", 
+                  [group.id, update.message.text, 0, update.message.from.first_name || update.message.from.username, 'received', now]);
                 saveDatabase();
                 
                 if (win && !win.isDestroyed()) {
@@ -463,6 +496,18 @@ function startWebhookServer(port = WEBHOOK_PORT) {
 function registerIPCHandlers() {
   ipcMain.handle('app:getVersion', () => ({ version: VERSION, updates: UPDATE_INFO, timezone: LOCAL_TZ }));
   ipcMain.handle('app:getTime', () => ({ time: getLocalTime(), timestamp: Date.now(), timezone: LOCAL_TZ }));
+  ipcMain.handle('app:getWebConfig', () => ({ port: WEB_PORT, ip: getLocalIP(), timezone: LOCAL_TZ }));
+  ipcMain.handle('app:setWebPort', (_, port) => {
+    WEB_PORT = parseInt(port) || 8080;
+    runSql("INSERT OR REPLACE INTO settings (key, value) VALUES ('web_port', ?)", [WEB_PORT.toString()]);
+    // Перезапускаем веб-сервер
+    if (webServer) {
+      webServer.close();
+      webServer = null;
+    }
+    startWebServer(WEB_PORT);
+    return { success: true, port: WEB_PORT };
+  });
   ipcMain.handle('app:getPermissions', (_, role) => ({ permissions: ROLE_PERMISSIONS[role] || ROLE_PERMISSIONS.user }));
   ipcMain.handle('app:checkSchedule', () => checkAllSchedules());
   ipcMain.handle('app:getWebhookPort', () => ({ port: WEBHOOK_PORT }));
@@ -557,7 +602,7 @@ function registerIPCHandlers() {
   ipcMain.handle('db:toggleGroupStatus', (_, { id, status }) => runSql("UPDATE groups SET status = ? WHERE id = ?", [status, id]));
   
   ipcMain.handle('db:getMessages', (_, groupId) => queryAll("SELECT * FROM messages WHERE group_id = ? ORDER BY time ASC", [groupId]));
-  ipcMain.handle('db:addMessage', (_, { groupId, text, sent, sender, status }) => { try { db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [groupId, text, sent ? 1 : 0, sender || null, status || 'sent']); saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
+  ipcMain.handle('db:addMessage', (_, { groupId, text, sent, sender, status }) => { try { const now = new Date().toISOString(); db.run("INSERT INTO messages (group_id, text, sent, sender, status, time) VALUES (?, ?, ?, ?, ?, ?)", [groupId, text, sent ? 1 : 0, sender || null, status || 'sent', now]); saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('db:clearMessages', (_, groupId) => { if (groupId) return runSql("DELETE FROM messages WHERE group_id = ?", [groupId]); else return runSql("DELETE FROM messages"); });
   
   ipcMain.handle('db:getSchedules', () => queryAll("SELECT s.*, g.name as group_name, g.chat_id, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id ORDER BY s.id"));
@@ -607,10 +652,11 @@ function registerIPCHandlers() {
           const res = await (await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: g.chat_id, text, parse_mode: 'HTML' }) })).json();
           results.push({ groupId, groupName: g.name, success: res.ok, error: res.description });
           
+          const now = new Date().toISOString();
           if (res.ok) {
-            db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [groupId, text, 1, 'HubPro (мульти)', 'sent']);
+            db.run("INSERT INTO messages (group_id, text, sent, sender, status, time) VALUES (?, ?, ?, ?, ?, ?)", [groupId, text, 1, 'HubPro (мульти)', 'sent', now]);
           } else {
-            db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [groupId, text, 0, 'HubPro (мульти)', 'failed']);
+            db.run("INSERT INTO messages (group_id, text, sent, sender, status, time) VALUES (?, ?, ?, ?, ?, ?)", [groupId, text, 0, 'HubPro (мульти)', 'failed', now]);
           }
         } catch (e) {
           results.push({ groupId, groupName: g.name, success: false, error: e.message });
@@ -703,17 +749,19 @@ async function executeSchedule(s) {
       body: JSON.stringify({ chat_id: group.chat_id, text: s.text, parse_mode: 'HTML' }) 
     })).json(); 
     
+    const now = new Date().toISOString();
+    
     if (res.ok) { 
       db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'success', null]); 
-      db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [group.id, s.text, 1, 'HubPro (авто)', 'sent']); 
-      db.run("UPDATE schedules SET last_executed = ? WHERE id = ?", [new Date().toISOString(), s.id]); 
+      db.run("INSERT INTO messages (group_id, text, sent, sender, status, time) VALUES (?, ?, ?, ?, ?, ?)", [group.id, s.text, 1, 'HubPro (авто)', 'sent', now]); 
+      db.run("UPDATE schedules SET last_executed = ? WHERE id = ?", [now, s.id]); 
       if (win && !win.isDestroyed()) {
         win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: true, message: 'Сообщение отправлено' });
       }
       showNotification('HubPro', `Расписание "${s.name}" выполнено`);
     } else { 
       db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'error', res.description]); 
-      db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [group.id, s.text, 0, 'HubPro (авто)', 'failed']); 
+      db.run("INSERT INTO messages (group_id, text, sent, sender, status, time) VALUES (?, ?, ?, ?, ?, ?)", [group.id, s.text, 0, 'HubPro (авто)', 'failed', now]); 
       if (win && !win.isDestroyed()) {
         win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: false, error: res.description });
       }
@@ -800,7 +848,7 @@ async function createTray() {
   const contextMenu = Menu.buildFromTemplate([
     { label: '📱 Открыть HubPro', click: () => { win.show(); win.focus(); } },
     { type: 'separator' },
-    { label: '🌐 Веб-интерфейс', click: () => { require('electron').shell.openExternal(`http://localhost:${WEB_PORT}`); }},
+    { label: `🌐 Веб-интерфейс (порт ${WEB_PORT})`, click: () => { require('electron').shell.openExternal(`http://localhost:${WEB_PORT}`); }},
     { label: '🔄 Перезапустить polling', click: () => { const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"); const groups = queryAll("SELECT * FROM groups WHERE status = 'active'"); syncPolling(bots, groups); showNotification('HubPro', 'Polling перезапущен'); }},
     { label: '📊 Проверить расписание', click: () => { const result = checkAllSchedules(); showNotification('HubPro', result.success ? `Проверка: ${result.executed} выполнено` : 'Ошибка'); } },
     { type: 'separator' },
@@ -809,7 +857,7 @@ async function createTray() {
   
   tray.setContextMenu(contextMenu);
   tray.on('double-click', () => { win.show(); win.focus(); });
-  showNotification('HubPro', 'HubPro v' + VERSION + ' запущен\nЧасовой пояс: ' + LOCAL_TZ);
+  showNotification('HubPro', `HubPro v${VERSION} запущен\nЧасовой пояс: ${LOCAL_TZ}\nВеб: http://${getLocalIP()}:${WEB_PORT}`);
 }
 
 function syncPolling(bots, groups) { 
@@ -830,7 +878,8 @@ function syncPolling(bots, groups) {
           if (u.message?.message?.text) { 
             const g = groups.find(g => g.bot_id === bot.id && g.chat_id === u.message.chat.id.toString()); 
             if (g) { 
-              db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [g.id, u.message.text, 0, u.message.from.first_name || u.message.from.username, 'received']); 
+              const now = new Date().toISOString();
+              db.run("INSERT INTO messages (group_id, text, sent, sender, status, time) VALUES (?, ?, ?, ?, ?, ?)", [g.id, u.message.text, 0, u.message.from.first_name || u.message.from.username, 'received', now]); 
               saveDatabase();
               if (win && !win.isDestroyed()) win.webContents.send('tg:incoming', { groupId: g.id, text: u.message.text, time: u.message.date * 1000, sender: u.message.from.first_name || u.message.from.username }); 
             } 
