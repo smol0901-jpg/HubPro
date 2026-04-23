@@ -5,10 +5,10 @@ const fs = require('fs');
 const crypto = require('crypto');
 const http = require('http');
 
-const VERSION = '2.2.0';
+const VERSION = '2.2.1';
 const UPDATE_INFO = [
-  { version: '2.2.0', date: '2026-04-22', changes: ['Excel экспорт', 'Улучшенный UI'] },
-  { version: '2.1.0', date: '2026-04-22', changes: ['Веб-API', 'Синхронизация'] }
+  { version: '2.2.1', date: '2026-04-23', changes: ['Исправлено время', 'Исправлена отправка', 'Веб-вкладка', 'Инструкция'] },
+  { version: '2.2.0', date: '2026-04-22', changes: ['Excel экспорт'] }
 ];
 
 let win, tray, pollingIntervals = {}, botOffsets = {}, db, scheduleIntervals = [], SQL;
@@ -16,6 +16,9 @@ let webhookServer = null, webServer = null;
 const WEBHOOK_PORT = 3001;
 const WEB_PORT = 8080;
 const MAIN_ADMIN_LOGIN = 'NeuralAP';
+
+// Используем локальную временную зону
+const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Moscow';
 
 const ENCRYPTION_KEY = crypto.scryptSync(app.getPath('userData'), 'hubpro-salt', 32);
 const IV_LENGTH = 16;
@@ -51,6 +54,15 @@ function encrypt(text) { if (!text) return text; const iv = crypto.randomBytes(I
 function decrypt(text) { if (!text || !text.includes(':')) return text; try { const parts = text.split(':'); const iv = Buffer.from(parts[0], 'hex'); const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv); let decrypted = decipher.update(parts[1], 'hex', 'utf8'); decrypted += decipher.final('utf8'); return decrypted; } catch (e) { return text; } }
 function hashPassword(password) { return crypto.createHash('sha256').update(password).digest('hex'); }
 
+// Получить текущее время с учетом локальной зоны
+function getLocalTime() {
+  return new Date().toLocaleString('ru-RU', { timeZone: LOCAL_TZ });
+}
+
+function getLocalTimestamp() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'UTC' })).getTime();
+}
+
 function showNotification(title, body) {
   if (Notification.isSupported()) {
     const notification = new Notification({
@@ -63,45 +75,11 @@ function showNotification(title, body) {
 }
 
 const ROLE_PERMISSIONS = {
-  admin: { tabs: ['dashboard', 'bots', 'groups', 'chat', 'schedule', 'users', 'notifications', 'activity', 'ai_monitor', 'settings', 'templates'] },
+  admin: { tabs: ['dashboard', 'bots', 'groups', 'chat', 'schedule', 'users', 'notifications', 'activity', 'ai_monitor', 'settings', 'templates', 'web'] },
   helper: { tabs: ['users', 'notifications', 'settings'] },
   user: { tabs: ['dashboard', 'chat', 'notifications', 'settings'] }
 };
 
-// ============ EXCEL EXPORT ============
-function createExcel(data, filename) {
-  // Простой CSV экспорт (можно заменить на xlsx библиотеку)
-  let csv = '';
-  
-  if (data.type === 'bots') {
-    csv = 'ID,Название,Токен,Статус,Дата создания\n';
-    data.rows.forEach(b => {
-      csv += `${b.id},"${b.name}","${b.token}",${b.status},${b.created_at}\n`;
-    });
-  } else if (data.type === 'groups') {
-    csv = 'ID,Название,Chat ID,Бот,Статус\n';
-    data.rows.forEach(g => {
-      csv += `${g.id},"${g.name}",${g.chat_id},"${g.bot_name || ''}",${g.status}\n`;
-    });
-  } else if (data.type === 'messages') {
-    csv = 'ID,Группа,Текст,Отправлено,Отправитель,Статус,Время\n';
-    data.rows.forEach(m => {
-      csv += `${m.id},${m.group_id},"${m.text.replace(/"/g, '""')}",${m.sent ? 'Да' : 'Нет'},"${m.sender || ''}",${m.status},${m.time}\n`;
-    });
-  } else if (data.type === 'schedules') {
-    csv = 'ID,Название,Текст,Группа,Бот,Время,Повтор,Статус\n';
-    data.rows.forEach(s => {
-      csv += `${s.id},"${s.name}","${s.text.replace(/"/g, '""')}","${s.group_name}","${s.bot_name}",${s.scheduled_time},${s.repeat_type},${s.status}\n`;
-    });
-  } else if (data.type === 'users') {
-    csv = 'ID,Логин,Роль,Статус,Дата создания\n';
-    data.rows.forEach(u => {
-      csv += `${u.id},"${u.login}",${u.role},${u.status},${u.created_at}\n`;
-    });
-  }
-  
-  return csv;
-}
 
 async function initDatabase() {
   const initSqlJs = require('sql.js');
@@ -141,6 +119,7 @@ async function initDatabase() {
   
   saveDatabase();
   console.log('Database:', dbPath);
+  console.log('Timezone:', LOCAL_TZ);
   return db;
 }
 
@@ -164,6 +143,45 @@ function queryAll(sql, params = []) {
 function queryOne(sql, params = []) { const r = queryAll(sql, params); return r.length > 0 ? r[0] : null; }
 function runSql(sql, params = []) { try { db.run(sql, params); saveDatabase(); return { success: true }; } catch(e) { return { success: false, error: e.message }; } }
 function logActivity(userId, action, details) { db.run("INSERT INTO activity_log (user_id, action, details) VALUES (?, ?, ?)", [userId, action, details || null]); saveDatabase(); }
+
+// ============ EXCEL EXPORT ============
+function generateExcel(data) {
+  let csv = '';
+  
+  if (data.type === 'messages') {
+    csv = 'ID,Время,Текст,Отправитель,Статус,Тип\n';
+    data.items.forEach(m => {
+      csv += `${m.id},"${m.time}","${(m.text || '').replace(/"/g, '""')}","${m.sender || ''}","${m.status}","${m.sent ? 'Отправлено' : 'Получено'}"\n`;
+    });
+  } else if (data.type === 'bots') {
+    csv = 'ID,Название,Статус,Дата создания\n';
+    data.items.forEach(b => {
+      csv += `${b.id},"${b.name}","${b.status}","${b.created_at}"\n`;
+    });
+  } else if (data.type === 'groups') {
+    csv = 'ID,Название,Chat ID,Бот,Статус\n';
+    data.items.forEach(g => {
+      csv += `${g.id},"${g.name}","${g.chat_id}","${g.bot_name || ''}","${g.status}"\n`;
+    });
+  } else if (data.type === 'schedules') {
+    csv = 'ID,Название,Группа,Бот,Время,Повтор,Статус\n';
+    data.items.forEach(s => {
+      csv += `${s.id},"${s.name}","${s.group_name || ''}","${s.bot_name || ''}","${s.scheduled_time}","${s.repeat_type}","${s.status}"\n`;
+    });
+  } else if (data.type === 'users') {
+    csv = 'ID,Логин,Роль,Статус,Дата создания\n';
+    data.items.forEach(u => {
+      csv += `${u.id},"${u.login}","${u.role}","${u.status}","${u.created_at}"\n`;
+    });
+  } else if (data.type === 'activity') {
+    csv = 'ID,Пользователь,Действие,Детали,Время\n';
+    data.items.forEach(a => {
+      csv += `${a.id},"${a.login || 'Система'}","${a.action}","${a.details || ''}","${a.created_at}"\n`;
+    });
+  }
+  
+  return csv;
+}
 
 // ============ WEB SERVER ============
 function startWebServer(port = WEB_PORT) {
@@ -327,27 +345,39 @@ async function handleAPI(path, params) {
   if (path === 'getMessages') {
     const groupId = parseInt(params.groupId);
     const lastId = parseInt(params.lastId) || 0;
-    
     let sql = "SELECT * FROM messages WHERE group_id = ?";
     const queryParams = [groupId];
-    
-    if (lastId > 0) {
-      sql += " AND id > ?";
-      queryParams.push(lastId);
-    }
-    
+    if (lastId > 0) { sql += " AND id > ?"; queryParams.push(lastId); }
     sql += " ORDER BY time ASC LIMIT 100";
-    
     return queryAll(sql, queryParams);
   }
   
-  if (path === 'getStats') {
-    return getStats();
+  if (path === 'exportExcel') {
+    const type = params.type;
+    let items = [];
+    
+    if (type === 'messages') {
+      const groupId = parseInt(params.groupId);
+      items = queryAll("SELECT * FROM messages WHERE group_id = ? ORDER BY time DESC", [groupId]);
+    } else if (type === 'bots') {
+      items = queryAll("SELECT * FROM bots ORDER BY id");
+    } else if (type === 'groups') {
+      items = queryAll("SELECT g.*, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id ORDER BY g.id");
+    } else if (type === 'schedules') {
+      items = queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id ORDER BY s.id");
+    } else if (type === 'users') {
+      items = queryAll("SELECT * FROM users ORDER BY id");
+    } else if (type === 'activity') {
+      items = queryAll("SELECT a.*, u.login FROM activity_log a LEFT JOIN users u ON a.user_id = u.id ORDER BY a.created_at DESC LIMIT 500");
+    }
+    
+    const csv = generateExcel({ type, items });
+    return { success: true, csv: csv, filename: `hubpro_${type}_${new Date().toISOString().split('T')[0]}.csv` };
   }
   
-  if (path === 'getVersion') {
-    return { version: VERSION, updates: UPDATE_INFO };
-  }
+  if (path === 'getStats') return getStats();
+  if (path === 'getVersion') return { version: VERSION, updates: UPDATE_INFO, timezone: LOCAL_TZ };
+  if (path === 'getTime') return { time: getLocalTime(), timestamp: Date.now(), timezone: LOCAL_TZ };
   
   return { error: 'Unknown API: ' + path };
 }
@@ -431,7 +461,8 @@ function startWebhookServer(port = WEBHOOK_PORT) {
 }
 
 function registerIPCHandlers() {
-  ipcMain.handle('app:getVersion', () => ({ version: VERSION, updates: UPDATE_INFO }));
+  ipcMain.handle('app:getVersion', () => ({ version: VERSION, updates: UPDATE_INFO, timezone: LOCAL_TZ }));
+  ipcMain.handle('app:getTime', () => ({ time: getLocalTime(), timestamp: Date.now(), timezone: LOCAL_TZ }));
   ipcMain.handle('app:getPermissions', (_, role) => ({ permissions: ROLE_PERMISSIONS[role] || ROLE_PERMISSIONS.user }));
   ipcMain.handle('app:checkSchedule', () => checkAllSchedules());
   ipcMain.handle('app:getWebhookPort', () => ({ port: WEBHOOK_PORT }));
@@ -439,48 +470,32 @@ function registerIPCHandlers() {
   ipcMain.handle('app:getMainAdmin', () => ({ login: MAIN_ADMIN_LOGIN }));
   ipcMain.handle('app:reloadAll', () => { syncPolling(queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"), queryAll("SELECT * FROM groups WHERE status = 'active'")); return { success: true }; });
   
-  // Excel Export
-  ipcMain.handle('excel:exportBots', async () => {
-    const bots = queryAll("SELECT * FROM bots").map(b => ({ ...b, token: decrypt(b.token) }));
-    const csv = createExcel({ type: 'bots', rows: bots });
-    return { success: true, data: csv, filename: 'hubpro_bots.csv' };
-  });
-  ipcMain.handle('excel:exportGroups', async () => {
-    const groups = queryAll("SELECT g.*, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id");
-    const csv = createExcel({ type: 'groups', rows: groups });
-    return { success: true, data: csv, filename: 'hubpro_groups.csv' };
-  });
-  ipcMain.handle('excel:exportMessages', async (_, groupId) => {
-    const messages = groupId ? queryAll("SELECT * FROM messages WHERE group_id = ? ORDER BY time DESC", [groupId]) : queryAll("SELECT m.*, g.name as group_name FROM messages m LEFT JOIN groups g ON m.group_id = g.id ORDER BY time DESC");
-    const csv = createExcel({ type: 'messages', rows: messages });
-    return { success: true, data: csv, filename: 'hubpro_messages.csv' };
-  });
-  ipcMain.handle('excel:exportSchedules', async () => {
-    const schedules = queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id");
-    const csv = createExcel({ type: 'schedules', rows: schedules });
-    return { success: true, data: csv, filename: 'hubpro_schedules.csv' };
-  });
-  ipcMain.handle('excel:exportUsers', async () => {
-    const users = queryAll("SELECT id, login, role, status, created_at FROM users");
-    const csv = createExcel({ type: 'users', rows: users });
-    return { success: true, data: csv, filename: 'hubpro_users.csv' };
-  });
-  ipcMain.handle('excel:exportAll', async () => {
-    return {
-      success: true,
-      data: {
-        bots: createExcel({ type: 'bots', rows: queryAll("SELECT * FROM bots").map(b => ({...b, token: decrypt(b.token)})) }),
-        groups: createExcel({ type: 'groups', rows: queryAll("SELECT g.*, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id") }),
-        messages: createExcel({ type: 'messages', rows: queryAll("SELECT m.*, g.name as group_name FROM messages m LEFT JOIN groups g ON m.group_id = g.id") }),
-        schedules: createExcel({ type: 'schedules', rows: queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id") }),
-        users: createExcel({ type: 'users', rows: queryAll("SELECT id, login, role, status, created_at FROM users") })
-      },
-      filename: 'hubpro_export_all.csv'
-    };
-  });
-  
   ipcMain.handle('data:export', async () => { try { return { success: true, data: { bots: queryAll("SELECT id, name, token, online, status, created_at FROM bots").map(b => ({...b, token: decrypt(b.token)})), groups: queryAll("SELECT g.id, g.name, g.chat_id, g.bot_id, g.topic_ids, g.status, g.created_at, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id"), schedules: queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id"), users: queryAll("SELECT id, login, role, status, created_at FROM users"), templates: queryAll("SELECT * FROM templates") } }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('data:import', async (_, { bots, groups, schedules, users, templates }) => { try { if (bots) for (const b of bots) if (b.name && b.token) try { db.run("INSERT OR IGNORE INTO bots (name, token, online, status) VALUES (?, ?, ?, ?)", [b.name, encrypt(b.token), b.online ? 1 : 0, b.status || 'active']); } catch(e) {} if (groups) for (const g of groups) if (g.name && g.chat_id && g.bot_id) try { db.run("INSERT OR IGNORE INTO groups (name, chat_id, bot_id, topic_ids, status) VALUES (?, ?, ?, ?, ?)", [g.name, g.chat_id, g.bot_id, g.topic_ids || null, g.status || 'active']); } catch(e) {} if (schedules) for (const s of schedules) if (s.name && s.text && s.group_id && s.bot_id) try { db.run("INSERT OR IGNORE INTO schedules (name, text, group_id, bot_id, scheduled_time, repeat_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)", [s.name, s.text, s.group_id, s.bot_id, s.scheduled_time, s.repeat_type || 'once', s.status || 'active']); } catch(e) {} if (templates) for (const t of templates) if (t.name && t.content) try { db.run("INSERT OR IGNORE INTO templates (name, content) VALUES (?, ?)", [t.name, t.content]); } catch(e) {} saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
+  
+  ipcMain.handle('data:exportExcel', async (_, { type, groupId }) => {
+    try {
+      let items = [];
+      if (type === 'messages' && groupId) {
+        items = queryAll("SELECT * FROM messages WHERE group_id = ? ORDER BY time DESC", [groupId]);
+      } else if (type === 'bots') {
+        items = queryAll("SELECT * FROM bots ORDER BY id");
+      } else if (type === 'groups') {
+        items = queryAll("SELECT g.*, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id ORDER BY g.id");
+      } else if (type === 'schedules') {
+        items = queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id ORDER BY s.id");
+      } else if (type === 'users') {
+        items = queryAll("SELECT * FROM users ORDER BY id");
+      } else if (type === 'activity') {
+        items = queryAll("SELECT a.*, u.login FROM activity_log a LEFT JOIN users u ON a.user_id = u.id ORDER BY a.created_at DESC LIMIT 500");
+      }
+      
+      const csv = generateExcel({ type, items });
+      return { success: true, csv, filename: `hubpro_${type}_${new Date().toISOString().split('T')[0]}.csv` };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
   
   ipcMain.handle('auth:login', (_, { login, password }) => { 
     const user = queryOne("SELECT * FROM users WHERE login = ?", [login]); 
@@ -588,13 +603,23 @@ function registerIPCHandlers() {
       const g = queryOne("SELECT g.*, b.token as bot_token FROM groups g LEFT JOIN bots b ON g.bot_id = b.id WHERE g.id = ?", [groupId]);
       if (g && g.bot_token) {
         try {
-          const res = await (await fetch(`https://api.telegram.org/bot${decrypt(g.bot_token)}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: g.chat_id, text, parse_mode: 'HTML' }) })).json();
-          results.push({ groupId, success: res.ok, error: res.description });
+          const token = decrypt(g.bot_token);
+          const res = await (await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: g.chat_id, text, parse_mode: 'HTML' }) })).json();
+          results.push({ groupId, groupName: g.name, success: res.ok, error: res.description });
+          
+          if (res.ok) {
+            db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [groupId, text, 1, 'HubPro (мульти)', 'sent']);
+          } else {
+            db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [groupId, text, 0, 'HubPro (мульти)', 'failed']);
+          }
         } catch (e) {
-          results.push({ groupId, success: false, error: e.message });
+          results.push({ groupId, groupName: g.name, success: false, error: e.message });
         }
+      } else {
+        results.push({ groupId, groupName: g?.name || 'Unknown', success: false, error: 'Бот не найден' });
       }
     }
+    saveDatabase();
     return { success: true, results };
   });
   
@@ -784,7 +809,7 @@ async function createTray() {
   
   tray.setContextMenu(contextMenu);
   tray.on('double-click', () => { win.show(); win.focus(); });
-  showNotification('HubPro', 'HubPro v' + VERSION + ' запущен');
+  showNotification('HubPro', 'HubPro v' + VERSION + ' запущен\nЧасовой пояс: ' + LOCAL_TZ);
 }
 
 function syncPolling(bots, groups) { 
