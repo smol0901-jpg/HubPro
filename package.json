@@ -19,12 +19,12 @@
   "dependencies": {
     "sql.js": "^1.10.3",
     "electron-updater": "^6.1.7",
-    "electron-log": "^5.0.0"
+    "express": "^4.18.2"
   },
   "build": {
     "appId": "com.hubpro.app",
     "productName": "HubPro",
-    "copyright": "NEURAL_ARCHITECT_PREMIUM++",
+    "copyright": "Copyright © 2026 NEURAL_ARCHITECT_PREMIUM++",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -34,12 +34,7 @@
       "preload.js",
       "renderer/**/*",
       "build/**/*",
-      "node_modules/**/*",
-      "package.json"
-    ],
-    "asar": true,
-    "asarUnpack": [
-      "node_modules/sql.js/**/*"
+      "node_modules/sql.js/dist/**/*"
     ],
     "extraResources": [
       {
@@ -58,18 +53,22 @@
           "arch": ["x64"]
         }
       ],
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
-      "perMachine": false,
       "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "allowElevation": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "HubPro"
     },
     "portable": {
-      "artifactName": "${productName}-${version}-portable.${ext}"
+      "artifactName": "HubPro-${version}-portable.exe"
     },
     "publish": {
       "provider": "github",
