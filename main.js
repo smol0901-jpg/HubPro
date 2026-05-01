@@ -5,11 +5,11 @@ const fs = require('fs');
 const crypto = require('crypto');
 const http = require('http');
 
-const VERSION = '2.3.0';
+const VERSION = '2.3.1';
 const COMPANY_NAME = 'NEURAL_ARCHITECT_PREMIUM++';
 const UPDATE_INFO = [
-  { version: '2.3.0', date: '2026-04-23', changes: ['Система логирования расписания', 'Раздел планирования', 'Исправления багов', 'Безопасность HelpNeural'] },
-  { version: '2.2.2', date: '2026-04-23', changes: ['Исправлено время', 'Веб настройки'] }
+  { version: '2.3.1', date: '2026-05-01', changes: ['Исправлена проблема с updateGroup', 'Добавлен syncPolling после изменения группы'] },
+  { version: '2.3.0', date: '2026-05-01', changes: ['Система логирования расписания', 'Раздел планирования', 'Исправления багов', 'Безопасность HelpNeural'] }
 ];
 
 let win, tray, pollingIntervals = {}, botOffsets = {}, db, scheduleIntervals = [], SQL;
@@ -58,9 +58,9 @@ const ScheduleLogger = {
       id: Date.now(),
       schedule_id: scheduleId,
       schedule_name: scheduleName,
-      action: action, // 'created', 'executed', 'deleted', 'error', 'updated'
+      action: action,
       details: details,
-      status: status, // 'success', 'error', 'warning'
+      status: status,
       error_message: error,
       timestamp: new Date().toISOString(),
       user_id: null
@@ -89,14 +89,14 @@ const PlanningSystem = {
       id: Date.now(),
       title: plan.title,
       description: plan.description || '',
-      type: plan.type, // 'task', 'expense', 'income'
-      period: plan.period, // 'day', 'week', 'month', 'half_year', 'year'
+      type: plan.type || 'task',
+      period: plan.period || 'day',
       planned_date: plan.planned_date,
       planned_amount: plan.planned_amount || 0,
       actual_amount: plan.actual_amount || 0,
       group_id: plan.group_id || null,
-      status: 'pending', // 'pending', 'in_progress', 'completed', 'cancelled'
-      notify_before: plan.notify_before || 60, // минут
+      status: 'pending',
+      notify_before: plan.notify_before || 60,
       created_at: new Date().toISOString(),
       completed_at: null,
       created_by: plan.created_by || null
@@ -205,7 +205,6 @@ async function initDatabase() {
   if (!tableNames.includes('activity_log')) db.run(`CREATE TABLE activity_log (id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   if (!tableNames.includes('templates')) db.run(`CREATE TABLE templates (id INTEGER PRIMARY KEY, name TEXT, content TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   
-  // ТАБЛИЦА ПЛАНИРОВАНИЯ
   if (!tableNames.includes('planning')) {
     db.run(`CREATE TABLE planning (
       id INTEGER PRIMARY KEY,
@@ -225,7 +224,6 @@ async function initDatabase() {
     )`);
   }
   
-  // ТАБЛИЦА ЛОГОВ РАСПИСАНИЯ
   if (!tableNames.includes('schedule_action_logs')) {
     db.run(`CREATE TABLE schedule_action_logs (
       id INTEGER PRIMARY KEY,
@@ -240,17 +238,14 @@ async function initDatabase() {
     )`);
   }
   
-  // Настройки веб
   const webPortSetting = queryOne("SELECT * FROM settings WHERE key = 'web_port'");
   if (!webPortSetting) db.run("INSERT INTO settings (key, value) VALUES ('web_port', '8080')");
   const webEnabledSetting = queryOne("SELECT * FROM settings WHERE key = 'web_enabled'");
   if (!webEnabledSetting) db.run("INSERT INTO settings (key, value) VALUES ('web_enabled', 'true')");
   
-  // Главный админ
   const admin = queryOne("SELECT id FROM users WHERE login = ?", [MAIN_ADMIN_LOGIN]);
   if (!admin) db.run("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", [MAIN_ADMIN_LOGIN, hashPassword('0901Admin'), 'admin', 'active']);
   
-  // Резервный пользователь HelpNeural
   const help = queryOne("SELECT id FROM users WHERE login = ?", [HELPER_LOGIN]);
   if (!help) db.run("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", [HELPER_LOGIN, hashPassword('admin000'), 'helper', 'active']);
   
@@ -306,7 +301,6 @@ function generateExcel(data) {
   return csv;
 }
 
-// ============ WEB SERVER ============
 function startWebServer(port) {
   if (webServer) { console.log('Веб-сервер уже запущен на порту ' + port); return; }
   
@@ -446,11 +440,9 @@ async function handleAPI(path, params) {
   if (path === 'getVersion') return { version: VERSION, updates: UPDATE_INFO, timezone: LOCAL_TZ, company: COMPANY_NAME };
   if (path === 'getTime') return { time: getLocalTime(), timestamp: getLocalTimestamp(), timezone: LOCAL_TZ };
   
-  // Логи расписания
   if (path === 'getScheduleLogs') return ScheduleLogger.getLogs(params);
   if (path === 'getScheduleErrors') return ScheduleLogger.getErrors();
   
-  // Планирование
   if (path === 'getPlanning') return { plans: PlanningSystem.getPlans(params), dashboard: PlanningSystem.getDashboard() };
   if (path === 'addPlan') {
     const plan = PlanningSystem.add(params);
@@ -465,7 +457,6 @@ async function handleAPI(path, params) {
     return { success: true };
   }
   
-  // Настройки веб
   if (path === 'getWebSettings') {
     const webPort = queryOne("SELECT value FROM settings WHERE key = 'web_port'")?.value || '8080';
     const webEnabled = queryOne("SELECT value FROM settings WHERE key = 'web_enabled'")?.value || 'true';
@@ -513,16 +504,13 @@ function getStats() {
     scheduleCount: queryAll("SELECT COUNT(*) as c FROM schedules")[0]?.c || 0,
     activeSchedules: queryAll("SELECT COUNT(*) as c FROM schedules WHERE status = 'active'")[0]?.c || 0,
     templateCount: queryAll("SELECT COUNT(*) as c FROM templates")[0]?.c || 0,
-    // Ошибки со всех групп
     errorsToday: queryAll("SELECT COUNT(*) as c FROM messages WHERE status = 'failed' AND date(time) = ?", [today])[0]?.c || 0,
     errorsTotal: queryAll("SELECT COUNT(*) as c FROM messages WHERE status = 'failed'")[0]?.c || 0,
-    // Планирование
     pendingPlans: PlanningSystem.plans.filter(p => p.status === 'pending').length,
     completedPlans: PlanningSystem.plans.filter(p => p.status === 'completed').length
   };
 }
 
-// ============ WEBHOOK SERVER ============
 function startWebhookServer(port = WEBHOOK_PORT) {
   if (webhookServer) return;
   
@@ -559,7 +547,6 @@ function startWebhookServer(port = WEBHOOK_PORT) {
 }
 
 function registerIPCHandlers() {
-  // Основные
   ipcMain.handle('app:getVersion', () => ({ version: VERSION, updates: UPDATE_INFO, timezone: LOCAL_TZ, company: COMPANY_NAME }));
   ipcMain.handle('app:getTime', () => ({ time: getLocalTime(), timestamp: getLocalTimestamp(), timezone: LOCAL_TZ }));
   ipcMain.handle('app:getPermissions', (_, role) => ({ permissions: ROLE_PERMISSIONS[role] || ROLE_PERMISSIONS.user }));
@@ -568,7 +555,6 @@ function registerIPCHandlers() {
   ipcMain.handle('app:getHelper', () => ({ login: HELPER_LOGIN }));
   ipcMain.handle('app:reloadAll', () => { syncPolling(queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"), queryAll("SELECT * FROM groups WHERE status = 'active'")); return { success: true }; });
   
-  // Веб-настройки
   ipcMain.handle('app:getWebSettings', () => {
     const webPort = queryOne("SELECT value FROM settings WHERE key = 'web_port'")?.value || '8080';
     const webEnabled = queryOne("SELECT value FROM settings WHERE key = 'web_enabled'")?.value || 'true';
@@ -584,19 +570,16 @@ function registerIPCHandlers() {
   
   ipcMain.handle('app:restartWeb', () => { restartWebServer(WEB_PORT); return { success: true }; });
   
-  // Логи расписания
   ipcMain.handle('schedule:getLogs', (_, filters) => ScheduleLogger.getLogs(filters));
   ipcMain.handle('schedule:getErrors', () => ScheduleLogger.getErrors());
   ipcMain.handle('schedule:getById', (_, scheduleId) => ScheduleLogger.getBySchedule(scheduleId));
   
-  // Планирование
   ipcMain.handle('planning:get', (_, filters) => ({ plans: PlanningSystem.getPlans(filters), dashboard: PlanningSystem.getDashboard() }));
   ipcMain.handle('planning:add', (_, plan) => ({ success: true, plan: PlanningSystem.add(plan) }));
   ipcMain.handle('planning:update', (_, { id, ...data }) => ({ success: true, plan: PlanningSystem.update(id, data) }));
   ipcMain.handle('planning:delete', (_, id) => { PlanningSystem.delete(id); return { success: true }; });
   ipcMain.handle('planning:getDashboard', () => PlanningSystem.getDashboard());
   
-  // Данные
   ipcMain.handle('data:export', async () => { try { return { success: true, data: { bots: queryAll("SELECT id, name, token, online, status, created_at FROM bots").map(b => ({...b, token: decrypt(b.token)})), groups: queryAll("SELECT g.id, g.name, g.chat_id, g.bot_id, g.topic_ids, g.status, g.created_at, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id"), schedules: queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id"), users: queryAll("SELECT id, login, role, status, created_at FROM users"), templates: queryAll("SELECT * FROM templates"), planning: PlanningSystem.plans } }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('data:import', async (_, { bots, groups, schedules, users, templates, planning }) => { try { 
     if (bots) for (const b of bots) if (b.name && b.token) try { db.run("INSERT OR IGNORE INTO bots (name, token, online, status) VALUES (?, ?, ?, ?)", [b.name, encrypt(b.token), b.online ? 1 : 0, b.status || 'active']); } catch(e) {} 
@@ -623,7 +606,6 @@ function registerIPCHandlers() {
     } catch (err) { return { success: false, error: err.message }; }
   });
   
-  // Аутентификация
   ipcMain.handle('auth:login', (_, { login, password }) => { 
     const user = queryOne("SELECT * FROM users WHERE login = ?", [login]); 
     if (!user) return { success: false, error: 'Пользователь не найден' }; 
@@ -638,9 +620,7 @@ function registerIPCHandlers() {
   
   ipcMain.handle('auth:getUsers', () => queryAll("SELECT id, login, role, status, created_at, delete_request FROM users ORDER BY id"));
   
-  // БЕЗОПАСНОСТЬ: HelpNeural может менять только NeuralAP
   ipcMain.handle('auth:addUser', (_, { login, password, role, currentUserRole, currentUserId, currentUserLogin }) => { 
-    // Проверка на HelpNeural
     if (login === HELPER_LOGIN && currentUserRole !== 'admin') return { success: false, error: 'Только главный админ может создать резервного пользователя' };
     if (currentUserRole !== 'admin') return { success: false, error: 'Нет прав' }; 
     const exists = queryOne("SELECT id FROM users WHERE login = ?", [login]);
@@ -654,12 +634,10 @@ function registerIPCHandlers() {
     const targetUser = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
     if (!targetUser) return { success: false, error: 'Пользователь не найден' }; 
     
-    // Защита HelpNeural - только NeuralAP может менять
     if (targetUser.login === HELPER_LOGIN) {
       if (currentUserLogin !== MAIN_ADMIN_LOGIN) return { success: false, error: 'Только главный админ NeuralAP может изменить резервного пользователя' };
     }
     
-    // Защита NeuralAP
     if (targetUser.login === MAIN_ADMIN_LOGIN && currentUserLogin !== MAIN_ADMIN_LOGIN) {
       return { success: false, error: 'Главный админ защищён' };
     }
@@ -681,9 +659,7 @@ function registerIPCHandlers() {
     if (currentUserRole !== 'admin') return { success: false, error: 'Нет прав' }; 
     const target = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
     
-    // Защита NeuralAP
     if (target?.login === MAIN_ADMIN_LOGIN) { AIMonitor.log('SECURITY_ALERT', null, 'Попытка удаления главного админа', 'critical'); return { success: false, error: 'Главный админ защищён' }; }
-    // Защита HelpNeural
     if (target?.login === HELPER_LOGIN && currentUserLogin !== MAIN_ADMIN_LOGIN) return { success: false, error: 'Только NeuralAP может удалить резервного пользователя' };
     if (id === currentUserId) return { success: false, error: 'Нельзя удалить себя' };
     AIMonitor.log('DELETE_USER', null, `Удалён пользователь ${id}`, 'medium'); 
@@ -696,17 +672,14 @@ function registerIPCHandlers() {
   ipcMain.handle('auth:toggleUserStatus', (_, { id, status, currentUserRole, currentUserId, currentUserLogin }) => { 
     const target = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
     
-    // Защита NeuralAP - только NeuralAP может блокировать
     if (target?.login === MAIN_ADMIN_LOGIN) {
       if (currentUserLogin !== MAIN_ADMIN_LOGIN) return { success: false, error: 'Только NeuralAP может заблокировать главного админа' };
     }
     
-    // Защита HelpNeural - только NeuralAP может блокировать
     if (target?.login === HELPER_LOGIN) {
       if (currentUserLogin !== MAIN_ADMIN_LOGIN) return { success: false, error: 'Только NeuralAP может заблокировать резервного пользователя' };
     }
     
-    // HelpNeural может разблокировать всех
     if (currentUserLogin === HELPER_LOGIN && status === 'active') {
       // Разрешаем
     } else if (currentUserRole !== 'admin' && currentUserRole !== 'helper') {
@@ -723,26 +696,34 @@ function registerIPCHandlers() {
   ipcMain.handle('ai:getAlerts', () => AIMonitor.getAlerts());
   ipcMain.handle('auth:getActivityLog', () => queryAll("SELECT a.*, u.login FROM activity_log a LEFT JOIN users u ON a.user_id = u.id ORDER BY a.created_at DESC LIMIT 100"));
   
-  // Боты
   ipcMain.handle('db:getBots', () => queryAll("SELECT * FROM bots ORDER BY id").map(b => ({ ...b, token: decrypt(b.token) })));
   ipcMain.handle('db:addBot', (_, { name, token }) => { try { db.run("INSERT INTO bots (name, token, status) VALUES (?, ?, ?)", [name, encrypt(token), 'active']); const lastId = queryOne("SELECT last_insert_rowid() as id"); AIMonitor.log('ADD_BOT', null, `Добавлен бот: ${name}`, 'medium'); logActivity(null, 'ADD_BOT', `Добавлен бот ${name}`); saveDatabase(); return { success: true, id: lastId.id }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('db:updateBot', (_, { id, name, token, status }) => { if (token) return runSql("UPDATE bots SET name = ?, token = ?, status = ? WHERE id = ?", [name, encrypt(token), status || 'active', id]); else return runSql("UPDATE bots SET name = ?, status = ? WHERE id = ?", [name, status || 'active', id]); });
   ipcMain.handle('db:deleteBot', (_, id) => { AIMonitor.log('DELETE_BOT', null, `Удалён бот ${id}`, 'medium'); logActivity(null, 'DELETE_BOT', `Удалён бот ${id}`); const result = runSql("DELETE FROM bots WHERE id = ?", [id]); if (result.success) syncPolling(queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"), queryAll("SELECT * FROM groups WHERE status = 'active'")); return result; });
   ipcMain.handle('db:toggleBotStatus', (_, { id, status }) => runSql("UPDATE bots SET status = ? WHERE id = ?", [status, id]));
   
-  // Группы
   ipcMain.handle('db:getGroups', () => queryAll("SELECT g.*, b.name as bot_name, b.token as bot_token FROM groups g LEFT JOIN bots b ON g.bot_id = b.id ORDER BY g.id"));
   ipcMain.handle('db:addGroup', (_, { name, chatId, botId, topicIds }) => { try { db.run("INSERT INTO groups (name, chat_id, bot_id, topic_ids, status) VALUES (?, ?, ?, ?, ?)", [name, chatId, botId, topicIds || null, 'active']); const lastId = queryOne("SELECT last_insert_rowid() as id"); AIMonitor.log('ADD_GROUP', null, `Добавлена группа: ${name}`, 'low'); logActivity(null, 'ADD_GROUP', `Добавлена группа ${name}`); saveDatabase(); return { success: true, id: lastId.id }; } catch (err) { return { success: false, error: err.message }; } });
-  ipcMain.handle('db:updateGroup', (_, { id, name, chatId, botId, topicIds, status }) => runSql("UPDATE groups SET name = ?, chat_id = ?, bot_id = ?, topic_ids = ?, status = ? WHERE id = ?", [name, chatId, botId, topicIds || null, status || 'active', id]));
+  
+  // ИСПРАВЛЕНО: Добавлен syncPolling после updateGroup
+  ipcMain.handle('db:updateGroup', (_, { id, name, chatId, botId, topicIds, status }) => { 
+    const result = runSql("UPDATE groups SET name = ?, chat_id = ?, bot_id = ?, topic_ids = ?, status = ? WHERE id = ?", [name, chatId, botId, topicIds || null, status || 'active', id]);
+    // Обновляем polling после изменения группы
+    if (result.success) {
+      const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'");
+      const groups = queryAll("SELECT * FROM groups WHERE status = 'active'");
+      syncPolling(bots, groups);
+    }
+    return result;
+  });
+  
   ipcMain.handle('db:deleteGroup', (_, id) => { AIMonitor.log('DELETE_GROUP', null, `Удалена группа ${id}`, 'medium'); logActivity(null, 'DELETE_GROUP', `Удалена группа ${id}`); return runSql("DELETE FROM groups WHERE id = ?", [id]); });
   ipcMain.handle('db:toggleGroupStatus', (_, { id, status }) => runSql("UPDATE groups SET status = ? WHERE id = ?", [status, id]));
   
-  // Сообщения
   ipcMain.handle('db:getMessages', (_, groupId) => queryAll("SELECT * FROM messages WHERE group_id = ? ORDER BY time ASC", [groupId]));
   ipcMain.handle('db:addMessage', (_, { groupId, text, sent, sender, status }) => { try { db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [groupId, text, sent ? 1 : 0, sender || null, status || 'sent']); saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('db:clearMessages', (_, groupId) => { if (groupId) return runSql("DELETE FROM messages WHERE group_id = ?", [groupId]); else return runSql("DELETE FROM messages"); });
   
-  // Расписания
   ipcMain.handle('db:getSchedules', () => queryAll("SELECT s.*, g.name as group_name, g.chat_id, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id ORDER BY s.id"));
   ipcMain.handle('db:getScheduleLogs', (_, scheduleId) => queryAll("SELECT * FROM schedule_logs WHERE schedule_id = ? ORDER BY executed_at DESC LIMIT 50", [scheduleId]));
   ipcMain.handle('db:addSchedule', (_, { name, text, groupId, botId, scheduledTime, repeatType }) => { 
@@ -751,7 +732,6 @@ function registerIPCHandlers() {
       const lastId = queryOne("SELECT last_insert_rowid() as id"); 
       AIMonitor.log('ADD_SCHEDULE', null, `Создано расписание: ${name}`, 'low'); 
       logActivity(null, 'ADD_SCHEDULE', `Создано расписание ${name}`); 
-      // ЛОГ РАСПИСАНИЯ
       ScheduleLogger.add(lastId.id, name, 'created', `Создано расписание: ${name}`, 'success');
       saveDatabase(); 
       return { success: true, id: lastId.id }; 
@@ -761,14 +741,12 @@ function registerIPCHandlers() {
   ipcMain.handle('db:deleteSchedule', (_, id) => { 
     const schedule = queryOne("SELECT * FROM schedules WHERE id = ?", [id]);
     logActivity(null, 'DELETE_SCHEDULE', `Удалено расписание ${id}`);
-    // ЛОГ РАСПИСАНИЯ
     if (schedule) ScheduleLogger.add(id, schedule.name, 'deleted', `Удалено расписание: ${schedule.name}`, 'success');
     return runSql("DELETE FROM schedules WHERE id = ?", [id]); 
   });
   ipcMain.handle('db:toggleSchedule', (_, { id, status }) => runSql("UPDATE schedules SET status = ? WHERE id = ?", [status, id]));
   ipcMain.handle('db:resetSchedule', (_, id) => runSql("UPDATE schedules SET last_executed = NULL WHERE id = ?", [id]));
   
-  // Шаблоны
   ipcMain.handle('db:getTemplates', () => queryAll("SELECT * FROM templates ORDER BY id"));
   ipcMain.handle('db:addTemplate', (_, { name, content }) => { try { db.run("INSERT INTO templates (name, content) VALUES (?, ?)", [name, content]); saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
   ipcMain.handle('db:updateTemplate', (_, { id, name, content }) => runSql("UPDATE templates SET name = ?, content = ? WHERE id = ?", [name, content, id]));
@@ -776,13 +754,11 @@ function registerIPCHandlers() {
   
   ipcMain.handle('db:getStats', () => getStats());
   
-  // Уведомления
   ipcMain.handle('notifications:send', (_, { userId, fromId, text, type }) => runSql("INSERT INTO notifications (user_id, from_id, text, type) VALUES (?, ?, ?, ?)", [userId, fromId, text, type || 'message']));
   ipcMain.handle('notifications:get', (_, userId) => queryAll("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50", [userId]));
   ipcMain.handle('notifications:markRead', (_, id) => runSql("UPDATE notifications SET read = 1 WHERE id = ?", [id]));
   ipcMain.handle('notifications:getUnreadCount', (_, userId) => ({ count: queryAll("SELECT COUNT(*) as c FROM notifications WHERE user_id = ? AND read = 0", [userId])[0]?.c || 0 }));
   
-  // Telegram
   ipcMain.on('tg:sync-config', async () => { const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"); const groups = queryAll("SELECT * FROM groups WHERE status = 'active'"); syncPolling(bots, groups); });
   ipcMain.handle('tg:send', async (_, { token, chatId, text, topicIds }) => { 
     try { 
@@ -848,7 +824,6 @@ function checkAllSchedules() {
             }
           }
         } else {
-          // ДЛЯ ПОВТОРЯЮЩИХСЯ - проверяем каждый интервал
           if (!s.last_executed) {
             executeSchedule(s);
             executed++;
@@ -903,21 +878,18 @@ async function executeSchedule(s) {
       db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'success', null]); 
       db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [group.id, s.text, 1, 'HubPro (авто)', 'sent']); 
       db.run("UPDATE schedules SET last_executed = ? WHERE id = ?", [new Date().toISOString(), s.id]); 
-      // ЛОГ РАСПИСАНИЯ
       ScheduleLogger.add(s.id, s.name, 'executed', `Выполнено: ${s.text}`, 'success');
       if (win && !win.isDestroyed()) win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: true, message: 'Сообщение отправлено' });
       showNotification('HubPro', `Расписание "${s.name}" выполнено`);
     } else { 
       db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'error', res.description]); 
       db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [group.id, s.text, 0, 'HubPro (авто)', 'failed']); 
-      // ЛОГ РАСПИСАНИЯ С ОШИБКОЙ
       ScheduleLogger.add(s.id, s.name, 'error', `Ошибка отправки: ${s.text}`, 'error', res.description);
       if (win && !win.isDestroyed()) win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: false, error: res.description });
       showNotification('HubPro', `Ошибка расписания: ${res.description}`);
     } 
   } catch (e) { 
     db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'error', e.message]); 
-    // ЛОГ РАСПИСАНИЯ С ОШИБКОЙ
     ScheduleLogger.add(s.id, s.name, 'error', `Исключение: ${s.text}`, 'error', e.message);
     if (win && !win.isDestroyed()) win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: false, error: e.message });
     showNotification('HubPro', `Ошибка: ${e.message}`);
@@ -958,7 +930,6 @@ app.whenReady().then(async () => {
   startScheduleChecker(); 
   startWebhookServer(WEBHOOK_PORT);
   
-  // Загружаем настройки веб
   const webPortSetting = queryOne("SELECT value FROM settings WHERE key = 'web_port'");
   const webEnabledSetting = queryOne("SELECT value FROM settings WHERE key = 'web_enabled'");
   WEB_PORT = parseInt(webPortSetting?.value) || 8080;
@@ -968,7 +939,6 @@ app.whenReady().then(async () => {
   
   checkAllSchedules();
   
-  // АВТО ОБНОВЛЕНИЕ ГРУПП ПРИ ЗАПУСКЕ
   const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"); 
   const groups = queryAll("SELECT * FROM groups WHERE status = 'active'"); 
   syncPolling(bots, groups); 
