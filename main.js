@@ -1,1032 +1,696 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, nativeImage, Notification } = require('electron');
-const { autoUpdater } = require('electron-updater');
+const express = require('express');
+const bodyParser = require('body-parser');
 const path = require('path');
 const fs = require('fs');
-const crypto = require('crypto');
+const https = require('https');
 const http = require('http');
+const crypto = require('crypto');
+const { Telegraf, Scenes, session, Markup } = require('telegraf');
+const cron = require('node-cron');
+const { exec } = require('child_process');
+const ExcelJS = require('exceljs');
+const WebSocket = require('ws');
+const axios = require('axios');
 
-const VERSION = '2.3.1';
-const COMPANY_NAME = 'NEURAL_ARCHITECT_PREMIUM++';
-const UPDATE_INFO = [
-  { version: '2.3.1', date: '2026-05-01', changes: ['Исправлена проблема с updateGroup', 'Добавлен syncPolling после изменения группы'] },
-  { version: '2.3.0', date: '2026-05-01', changes: ['Система логирования расписания', 'Раздел планирования', 'Исправления багов', 'Безопасность HelpNeural'] }
-];
-
-let win, tray, pollingIntervals = {}, botOffsets = {}, db, scheduleIntervals = [], SQL;
-let webhookServer = null, webServer = null;
-const WEBHOOK_PORT = 3001;
-let WEB_PORT = 8080;
-const MAIN_ADMIN_LOGIN = 'NeuralAP';
-const HELPER_LOGIN = 'HelpNeural';
-const LOCAL_TZ = 'Europe/Moscow';
-
-const ENCRYPTION_KEY = crypto.scryptSync(app.getPath('userData'), 'hubpro-salt', 32);
-const IV_LENGTH = 16;
-
-const AIMonitor = {
-  logs: [],
-  log(action, userId, details, risk = 'low') {
-    const entry = { id: Date.now(), timestamp: new Date().toISOString(), action, userId, details, risk, ai_analyzed: false };
-    this.logs.push(entry);
-    if (this.logs.length > 1000) this.logs = this.logs.slice(-500);
-    if (risk === 'high' || risk === 'critical') this.analyzeAction(entry);
-    return entry;
-  },
-  analyzeAction(entry) {
-    const patterns = [
-      { pattern: /delete.*user/i, risk: 'critical', message: 'Попытка удаления пользователя' },
-      { pattern: /block.*admin/i, risk: 'critical', message: 'Попытка блокировки админа' },
-    ];
-    for (const p of patterns) {
-      if (p.pattern.test(entry.details || entry.action)) {
-        entry.ai_warning = p.message;
-        entry.risk = p.risk;
-        entry.ai_analyzed = true;
-        break;
-      }
-    }
-  },
-  getLogs(limit = 50) { return this.logs.slice(-limit).reverse(); },
-  getAlerts() { return this.logs.filter(l => l.risk === 'high' || l.risk === 'critical').slice(-20); }
+// ==================== КОНФИГУРАЦИЯ ====================
+const CONFIG = {
+    port: 3000,
+    webPort: 8080,
+    encryptionKey: 'HubPro2026SecretKey!',
+    adminLogin: 'admin',
+    adminPassword: '901Admin',
+    dbPath: './database',
+    excelPath: './excel'
 };
 
-// СИСТЕМА ЛОГИРОВАНИЯ РАСПИСАНИЯ
-const ScheduleLogger = {
-  logs: [],
-  add(scheduleId, scheduleName, action, details, status = 'success', error = null) {
-    const entry = {
-      id: Date.now(),
-      schedule_id: scheduleId,
-      schedule_name: scheduleName,
-      action: action,
-      details: details,
-      status: status,
-      error_message: error,
-      timestamp: new Date().toISOString(),
-      user_id: null
-    };
-    this.logs.push(entry);
-    if (this.logs.length > 1000) this.logs = this.logs.slice(-500);
-    return entry;
-  },
-  getLogs(filters = {}) {
-    let result = this.logs.slice().reverse();
-    if (filters.scheduleId) result = result.filter(l => l.schedule_id === filters.scheduleId);
-    if (filters.action) result = result.filter(l => l.action === filters.action);
-    if (filters.status) result = result.filter(l => l.status === filters.status);
-    if (filters.search) result = result.filter(l => l.details.toLowerCase().includes(filters.search.toLowerCase()));
-    return result.slice(0, filters.limit || 100);
-  },
-  getErrors() { return this.logs.filter(l => l.status === 'error'); },
-  getBySchedule(scheduleId) { return this.logs.filter(l => l.schedule_id === scheduleId).slice().reverse(); }
-};
+// ==================== ШИФРОВАНИЕ ====================
+function encrypt(text) {
+    const iv = crypto.randomBytes(16);
+    const key = crypto.scryptSync(CONFIG.encryptionKey, 'salt', 32);
+    const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+    let encrypted = cipher.update(text, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    return iv.toString('hex') + ':' + encrypted;
+}
 
-// СИСТЕМА ПЛАНИРОВАНИЯ
-const PlanningSystem = {
-  plans: [],
-  add(plan) {
-    const entry = {
-      id: Date.now(),
-      title: plan.title,
-      description: plan.description || '',
-      type: plan.type || 'task',
-      period: plan.period || 'day',
-      planned_date: plan.planned_date,
-      planned_amount: plan.planned_amount || 0,
-      actual_amount: plan.actual_amount || 0,
-      group_id: plan.group_id || null,
-      status: 'pending',
-      notify_before: plan.notify_before || 60,
-      created_at: new Date().toISOString(),
-      completed_at: null,
-      created_by: plan.created_by || null
-    };
-    this.plans.push(entry);
-    return entry;
-  },
-  update(id, data) {
-    const idx = this.plans.findIndex(p => p.id === id);
-    if (idx >= 0) {
-      Object.assign(this.plans[idx], data);
-      if (data.status === 'completed') this.plans[idx].completed_at = new Date().toISOString();
-      return this.plans[idx];
+function decrypt(text) {
+    try {
+        const parts = text.split(':');
+        const iv = Buffer.from(parts[0], 'hex');
+        const encrypted = parts[1];
+        const key = crypto.scryptSync(CONFIG.encryptionKey, 'salt', 32);
+        const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+        let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        return decrypted;
+    } catch (e) {
+        return text;
     }
-    return null;
-  },
-  delete(id) { this.plans = this.plans.filter(p => p.id !== id); },
-  getPlans(filters = {}) {
-    let result = this.plans.slice();
-    if (filters.period) result = result.filter(p => p.period === filters.period);
-    if (filters.type) result = result.filter(p => p.type === filters.type);
-    if (filters.status) result = result.filter(p => p.status === filters.status);
-    if (filters.groupId) result = result.filter(p => p.group_id === filters.groupId);
-    if (filters.dateFrom) result = result.filter(p => p.planned_date >= filters.dateFrom);
-    if (filters.dateTo) result = result.filter(p => p.planned_date <= filters.dateTo);
-    return result.sort((a, b) => new Date(a.planned_date) - new Date(b.planned_date));
-  },
-  getDashboard() {
-    const today = new Date().toISOString().split('T')[0];
-    const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-    const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+}
+
+// ==================== БД ====================
+function initDB() {
+    if (!fs.existsSync(CONFIG.dbPath)) fs.mkdirSync(CONFIG.dbPath, { recursive: true });
+    if (!fs.existsSync(CONFIG.excelPath)) fs.mkdirSync(CONFIG.excelPath, { recursive: true });
     
-    return {
-      day: this.plans.filter(p => p.period === 'day' && p.planned_date === today),
-      week: this.plans.filter(p => p.period === 'week' && p.planned_date >= weekStart.toISOString().split('T')[0]),
-      month: this.plans.filter(p => p.period === 'month' && p.planned_date >= monthStart.toISOString().split('T')[0]),
-      pending: this.plans.filter(p => p.status === 'pending'),
-      completed: this.plans.filter(p => p.status === 'completed'),
-      totalIncome: this.plans.filter(p => p.type === 'income').reduce((sum, p) => sum + (p.actual_amount || p.planned_amount), 0),
-      totalExpense: this.plans.filter(p => p.type === 'expense').reduce((sum, p) => sum + (p.actual_amount || p.planned_amount), 0)
-    };
-  },
-  checkDue() {
-    const now = new Date();
-    const due = [];
-    this.plans.forEach(p => {
-      if (p.status !== 'pending') return;
-      const planned = new Date(p.planned_date);
-      const diffMs = planned - now;
-      const diffMins = Math.floor(diffMs / 60000);
-      if (diffMins > 0 && diffMins <= p.notify_before) due.push(p);
+    const tables = ['bots', 'groups', 'schedules', 'templates', 'users', 'messages', 'notifications', 'ai_tasks', 'error_logs', 'settings'];
+    tables.forEach(table => {
+        const file = path.join(CONFIG.dbPath, table + '.json');
+        if (!fs.existsSync(file)) fs.writeFileSync(file, '[]');
     });
-    return due;
-  }
-};
-
-function encrypt(text) { if (!text) return text; const iv = crypto.randomBytes(IV_LENGTH); const cipher = crypto.createCipheriv('aes-256-cbc', ENCRYPTION_KEY, iv); let encrypted = cipher.update(text, 'utf8', 'hex'); encrypted += cipher.final('hex'); return iv.toString('hex') + ':' + encrypted; }
-function decrypt(text) { if (!text || !text.includes(':')) return text; try { const parts = text.split(':'); const iv = Buffer.from(parts[0], 'hex'); const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv); let decrypted = decipher.update(parts[1], 'hex', 'utf8'); decrypted += decipher.final('utf8'); return decrypted; } catch (e) { return text; } }
-function hashPassword(password) { return crypto.createHash('sha256').update(password).digest('hex'); }
-
-function getLocalTime() {
-  const date = new Date();
-  return date.toLocaleString('ru-RU', { timeZone: LOCAL_TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-function getLocalTimestamp() {
-  const date = new Date();
-  const utc = date.getTime() + (date.getTimezoneOffset() * 60000);
-  return utc + (3 * 3600000);
-}
 
-function showNotification(title, body) {
-  if (Notification.isSupported()) {
-    const notification = new Notification({ title, body, icon: path.join(__dirname, 'build', 'icon.png') });
-    notification.show();
-  }
-}
-
-const ROLE_PERMISSIONS = {
-  admin: { tabs: ['dashboard', 'bots', 'groups', 'chat', 'schedule', 'users', 'notifications', 'activity', 'ai_monitor', 'settings', 'templates', 'web', 'planning'] },
-  helper: { tabs: ['users', 'notifications', 'settings', 'planning'] },
-  user: { tabs: ['dashboard', 'chat', 'notifications', 'settings'] }
-};
-
-async function initDatabase() {
-  const initSqlJs = require('sql.js');
-  SQL = await initSqlJs();
-  const dbPath = path.join(app.getPath('userData'), 'hubpro.db');
-  let data = null;
-  if (fs.existsSync(dbPath)) data = fs.readFileSync(dbPath);
-  db = new SQL.Database(data ? new Uint8Array(data) : undefined);
-  
-  const tables = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
-  const tableNames = tables.length > 0 ? tables[0].values.map(t => t[0]) : [];
-  
-  if (!tableNames.includes('users')) db.run(`CREATE TABLE users (id INTEGER PRIMARY KEY, login TEXT UNIQUE, password TEXT, role TEXT DEFAULT 'user', status TEXT DEFAULT 'active', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, delete_request INTEGER DEFAULT 0)`);
-  else { try { db.run("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'"); } catch(e) {} }
-  
-  if (!tableNames.includes('bots')) db.run(`CREATE TABLE bots (id INTEGER PRIMARY KEY, name TEXT, token TEXT UNIQUE, status TEXT DEFAULT 'active', online INTEGER DEFAULT 0, webhook_url TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  if (!tableNames.includes('groups')) db.run(`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, chat_id TEXT, bot_id INTEGER, topic_ids TEXT, status TEXT DEFAULT 'active', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  if (!tableNames.includes('messages')) db.run(`CREATE TABLE messages (id INTEGER PRIMARY KEY, group_id INTEGER, text TEXT, sent INTEGER DEFAULT 1, sender TEXT, status TEXT DEFAULT 'sent', time DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  if (!tableNames.includes('schedules')) db.run(`CREATE TABLE schedules (id INTEGER PRIMARY KEY, name TEXT, text TEXT, group_id INTEGER, bot_id INTEGER, scheduled_time TEXT, repeat_type TEXT DEFAULT 'once', status TEXT DEFAULT 'active', last_executed DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  if (!tableNames.includes('schedule_logs')) db.run(`CREATE TABLE schedule_logs (id INTEGER PRIMARY KEY, schedule_id INTEGER, status TEXT, error TEXT, executed_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  if (!tableNames.includes('notifications')) db.run(`CREATE TABLE notifications (id INTEGER PRIMARY KEY, user_id INTEGER, from_id INTEGER, text TEXT, read INTEGER DEFAULT 0, type TEXT DEFAULT 'message', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  if (!tableNames.includes('settings')) db.run(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)`);
-  if (!tableNames.includes('activity_log')) db.run(`CREATE TABLE activity_log (id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  if (!tableNames.includes('templates')) db.run(`CREATE TABLE templates (id INTEGER PRIMARY KEY, name TEXT, content TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  
-  if (!tableNames.includes('planning')) {
-    db.run(`CREATE TABLE planning (
-      id INTEGER PRIMARY KEY,
-      title TEXT,
-      description TEXT,
-      type TEXT DEFAULT 'task',
-      period TEXT DEFAULT 'day',
-      planned_date TEXT,
-      planned_amount REAL DEFAULT 0,
-      actual_amount REAL DEFAULT 0,
-      group_id INTEGER,
-      status TEXT DEFAULT 'pending',
-      notify_before INTEGER DEFAULT 60,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      completed_at DATETIME,
-      created_by INTEGER
-    )`);
-  }
-  
-  if (!tableNames.includes('schedule_action_logs')) {
-    db.run(`CREATE TABLE schedule_action_logs (
-      id INTEGER PRIMARY KEY,
-      schedule_id INTEGER,
-      schedule_name TEXT,
-      action TEXT,
-      details TEXT,
-      status TEXT DEFAULT 'success',
-      error_message TEXT,
-      user_id INTEGER,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
-  }
-  
-  const webPortSetting = queryOne("SELECT * FROM settings WHERE key = 'web_port'");
-  if (!webPortSetting) db.run("INSERT INTO settings (key, value) VALUES ('web_port', '8080')");
-  const webEnabledSetting = queryOne("SELECT * FROM settings WHERE key = 'web_enabled'");
-  if (!webEnabledSetting) db.run("INSERT INTO settings (key, value) VALUES ('web_enabled', 'true')");
-  
-  const admin = queryOne("SELECT id FROM users WHERE login = ?", [MAIN_ADMIN_LOGIN]);
-  if (!admin) db.run("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", [MAIN_ADMIN_LOGIN, hashPassword('0901Admin'), 'admin', 'active']);
-  
-  const help = queryOne("SELECT id FROM users WHERE login = ?", [HELPER_LOGIN]);
-  if (!help) db.run("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", [HELPER_LOGIN, hashPassword('admin000'), 'helper', 'active']);
-  
-  saveDatabase();
-  console.log('Database:', dbPath);
-  console.log('Company:', COMPANY_NAME);
-  console.log('Timezone:', LOCAL_TZ);
-  return db;
-}
-
-function saveDatabase() {
-  const dbPath = path.join(app.getPath('userData'), 'hubpro.db');
-  const data = db.export();
-  fs.writeFileSync(dbPath, Buffer.from(data));
-}
-
-function queryAll(sql, params = []) {
-  try {
-    const stmt = db.prepare(sql);
-    if (params.length) stmt.bind(params);
-    const results = [];
-    while (stmt.step()) results.push(stmt.getAsObject());
-    stmt.free();
-    return results;
-  } catch(e) { return []; }
-}
-
-function queryOne(sql, params = []) { const r = queryAll(sql, params); return r.length > 0 ? r[0] : null; }
-function runSql(sql, params = []) { try { db.run(sql, params); saveDatabase(); return { success: true }; } catch(e) { return { success: false, error: e.message }; } }
-function logActivity(userId, action, details) { db.run("INSERT INTO activity_log (user_id, action, details) VALUES (?, ?, ?)", [userId, action, details || null]); saveDatabase(); }
-
-function generateExcel(data) {
-  let csv = '';
-  if (data.type === 'messages') {
-    csv = 'ID,Время,Текст,Отправитель,Статус,Тип\n';
-    data.items.forEach(m => { csv += `${m.id},"${m.time}","${(m.text || '').replace(/"/g, '""')}","${m.sender || ''}","${m.status}","${m.sent ? 'Отправлено' : 'Получено'}"\n`; });
-  } else if (data.type === 'bots') {
-    csv = 'ID,Название,Статус,Дата создания\n';
-    data.items.forEach(b => { csv += `${b.id},"${b.name}","${b.status}","${b.created_at}"\n`; });
-  } else if (data.type === 'groups') {
-    csv = 'ID,Название,Chat ID,Бот,Статус\n';
-    data.items.forEach(g => { csv += `${g.id},"${g.name}","${g.chat_id}","${g.bot_name || ''}","${g.status}"\n`; });
-  } else if (data.type === 'schedules') {
-    csv = 'ID,Название,Группа,Бот,Время,Повтор,Статус\n';
-    data.items.forEach(s => { csv += `${s.id},"${s.name}","${s.group_name || ''}","${s.bot_name || ''}","${s.scheduled_time}","${s.repeat_type}","${s.status}"\n`; });
-  } else if (data.type === 'users') {
-    csv = 'ID,Логин,Роль,Статус,Дата создания\n';
-    data.items.forEach(u => { csv += `${u.id},"${u.login}","${u.role}","${u.status}","${u.created_at}"\n`; });
-  } else if (data.type === 'activity') {
-    csv = 'ID,Пользователь,Действие,Детали,Время\n';
-    data.items.forEach(a => { csv += `${a.id},"${a.login || 'Система'}","${a.action}","${a.details || ''}","${a.created_at}"\n`; });
-  }
-  return csv;
-}
-
-function startWebServer(port) {
-  if (webServer) { console.log('Веб-сервер уже запущен на порту ' + port); return; }
-  
-  const htmlPath = path.join(__dirname, 'renderer', 'index.html');
-  let htmlContent = fs.existsSync(htmlPath) ? fs.readFileSync(htmlPath, 'utf8') : '';
-  
-  webServer = http.createServer(async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    
-    if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
-    
-    const url = req.url.split('?')[0];
-    const query = req.url.includes('?') ? req.url.split('?')[1] : '';
-    
-    if (url.startsWith('/api/')) {
-      const apiPath = url.replace('/api/', '');
-      let body = '';
-      req.on('data', chunk => body += chunk);
-      req.on('end', async () => {
-        try {
-          let params = {};
-          if (body) params = JSON.parse(body);
-          if (query) query.split('&').forEach(p => { const [k, v] = p.split('='); if (k) params[k] = decodeURIComponent(v || ''); });
-          const result = await handleAPI(apiPath, params);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(result));
-        } catch (e) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: e.message }));
-        }
-      });
-      return;
-    }
-    
-    if (url === '/' || url === '/index.html') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(htmlContent); return; }
-    
-    const filePath = path.join(__dirname, 'renderer', url);
-    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-      const ext = path.extname(filePath);
-      const contentTypes = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg' };
-      res.writeHead(200, { 'Content-Type': contentTypes[ext] || 'text/plain' });
-      res.end(fs.readFileSync(filePath));
-      return;
-    }
-    
-    res.writeHead(404); res.end('Not found');
-  });
-  
-  webServer.on('error', (err) => { if (err.code === 'EADDRINUSE') { console.log(`Порт ${port} занят, пробую ${port + 1}`); WEB_PORT = port + 1; startWebServer(WEB_PORT); } });
-  
-  webServer.listen(port, '0.0.0.0', () => {
-    console.log(`🌐 Веб-интерфейс: http://localhost:${port}`);
-    console.log(`📱 С телефона: http://${getLocalIP()}:${port}`);
-    showNotification('HubPro', `Веб на http://${getLocalIP()}:${port}`);
-  });
-}
-
-function stopWebServer() { if (webServer) { webServer.close(); webServer = null; console.log('Веб-сервер остановлен'); } }
-function restartWebServer(port) { stopWebServer(); setTimeout(() => startWebServer(port), 500); }
-
-function getLocalIP() {
-  const os = require('os');
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) return iface.address;
-    }
-  }
-  return 'localhost';
-}
-
-async function handleAPI(path, params) {
-  if (path === 'login') {
-    const user = queryOne("SELECT * FROM users WHERE login = ?", [params.login]);
-    if (!user) return { success: false, error: 'Пользователь не найден' };
-    if (user.password !== hashPassword(params.password)) return { success: false, error: 'Неверный пароль' };
-    if (user.status !== 'active') return { success: false, error: 'Аккаунт заблокирован' };
-    return { success: true, user: { id: user.id, login: user.login, role: user.role }, permissions: ROLE_PERMISSIONS[user.role] };
-  }
-  
-  if (path === 'getData') {
-    return {
-      bots: queryAll("SELECT * FROM bots WHERE status = 'active'").map(b => ({ ...b, token: decrypt(b.token) })),
-      groups: queryAll("SELECT g.*, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id WHERE g.status = 'active'"),
-      schedules: queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id"),
-      users: queryAll("SELECT id, login, role, status, created_at FROM users"),
-      templates: queryAll("SELECT * FROM templates"),
-      stats: getStats(),
-      planning: PlanningSystem.getPlans(),
-      planningDashboard: PlanningSystem.getDashboard()
-    };
-  }
-  
-  if (path === 'getGroups') return queryAll("SELECT g.*, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id WHERE g.status = 'active'");
-  
-  if (path === 'sendMessage') {
-    const groupId = parseInt(params.groupId);
-    const text = params.text;
-    const sender = params.sender || 'Web';
-    
-    const group = queryOne("SELECT g.*, b.token as bot_token FROM groups g LEFT JOIN bots b ON g.bot_id = b.id WHERE g.id = ?", [groupId]);
-    if (!group) return { success: false, error: 'Группа не найдена' };
-    if (!group.bot_token) return { success: false, error: 'Бот не назначен' };
-    
-    const token = decrypt(group.bot_token);
+function db(table) {
+    const file = path.join(CONFIG.dbPath, table + '.json');
     try {
-      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: group.chat_id, text, parse_mode: 'HTML' })
-      });
-      const result = await res.json();
-      
-      if (result.ok) {
-        db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [groupId, text, 1, sender, 'sent']);
-        saveDatabase();
-        if (win && !win.isDestroyed()) win.webContents.send('tg:incoming', { groupId: groupId, text, time: Date.now(), sender, fromWeb: true });
-        return { success: true, message: 'Отправлено' };
-      }
-      return { success: false, error: result.description };
-    } catch (e) { return { success: false, error: e.message }; }
-  }
-  
-  if (path === 'getMessages') {
-    const groupId = parseInt(params.groupId);
-    const lastId = parseInt(params.lastId) || 0;
-    let sql = "SELECT * FROM messages WHERE group_id = ?";
-    const queryParams = [groupId];
-    if (lastId > 0) { sql += " AND id > ?"; queryParams.push(lastId); }
-    sql += " ORDER BY time ASC LIMIT 100";
-    return queryAll(sql, queryParams);
-  }
-  
-  if (path === 'getStats') return getStats();
-  if (path === 'getVersion') return { version: VERSION, updates: UPDATE_INFO, timezone: LOCAL_TZ, company: COMPANY_NAME };
-  if (path === 'getTime') return { time: getLocalTime(), timestamp: getLocalTimestamp(), timezone: LOCAL_TZ };
-  
-  if (path === 'getScheduleLogs') return ScheduleLogger.getLogs(params);
-  if (path === 'getScheduleErrors') return ScheduleLogger.getErrors();
-  
-  if (path === 'getPlanning') return { plans: PlanningSystem.getPlans(params), dashboard: PlanningSystem.getDashboard() };
-  if (path === 'addPlan') {
-    const plan = PlanningSystem.add(params);
-    return { success: true, plan };
-  }
-  if (path === 'updatePlan') {
-    const plan = PlanningSystem.update(params.id, params);
-    return { success: !!plan, plan };
-  }
-  if (path === 'deletePlan') {
-    PlanningSystem.delete(params.id);
-    return { success: true };
-  }
-  
-  if (path === 'getWebSettings') {
-    const webPort = queryOne("SELECT value FROM settings WHERE key = 'web_port'")?.value || '8080';
-    const webEnabled = queryOne("SELECT value FROM settings WHERE key = 'web_enabled'")?.value || 'true';
-    return { port: parseInt(webPort), enabled: webEnabled === 'true', ip: getLocalIP() };
-  }
-  
-  if (path === 'setWebSettings') {
-    if (params.port) runSql("INSERT OR REPLACE INTO settings (key, value) VALUES ('web_port', ?)", [params.port.toString()]);
-    if (params.enabled !== undefined) runSql("INSERT OR REPLACE INTO settings (key, value) VALUES ('web_enabled', ?)", [params.enabled ? 'true' : 'false']);
-    const newPort = parseInt(params.port) || WEB_PORT;
-    const enabled = params.enabled !== undefined ? params.enabled : true;
-    if (enabled) restartWebServer(newPort); else stopWebServer();
-    return { success: true, port: newPort, enabled };
-  }
-  
-  if (path === 'exportExcel') {
-    const type = params.type;
-    let items = [];
-    if (type === 'messages' && params.groupId) items = queryAll("SELECT * FROM messages WHERE group_id = ? ORDER BY time DESC", [parseInt(params.groupId)]);
-    else if (type === 'bots') items = queryAll("SELECT * FROM bots ORDER BY id");
-    else if (type === 'groups') items = queryAll("SELECT g.*, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id ORDER BY g.id");
-    else if (type === 'schedules') items = queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id ORDER BY s.id");
-    else if (type === 'users') items = queryAll("SELECT * FROM users ORDER BY id");
-    else if (type === 'activity') items = queryAll("SELECT a.*, u.login FROM activity_log a LEFT JOIN users u ON a.user_id = u.id ORDER BY a.created_at DESC LIMIT 500");
-    else if (type === 'planning') items = PlanningSystem.getPlans();
-    
-    const csv = generateExcel({ type, items });
-    return { success: true, csv, filename: `hubpro_${type}_${new Date().toISOString().split('T')[0]}.csv` };
-  }
-  
-  return { error: 'Unknown API: ' + path };
+        return JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch (e) {
+        return [];
+    }
 }
 
-function getStats() {
-  const today = new Date().toISOString().split('T')[0];
-  return {
-    botCount: queryAll("SELECT COUNT(*) as c FROM bots")[0]?.c || 0,
-    activeBots: queryAll("SELECT COUNT(*) as c FROM bots WHERE status = 'active'")[0]?.c || 0,
-    groupCount: queryAll("SELECT COUNT(*) as c FROM groups")[0]?.c || 0,
-    activeGroups: queryAll("SELECT COUNT(*) as c FROM groups WHERE status = 'active'")[0]?.c || 0,
-    messageCount: queryAll("SELECT COUNT(*) as c FROM messages")[0]?.c || 0,
-    messagesToday: queryAll("SELECT COUNT(*) as c FROM messages WHERE date(time) = ?", [today])[0]?.c || 0,
-    userCount: queryAll("SELECT COUNT(*) as c FROM users")[0]?.c || 0,
-    activeUsers: queryAll("SELECT COUNT(*) as c FROM users WHERE status = 'active'")[0]?.c || 0,
-    scheduleCount: queryAll("SELECT COUNT(*) as c FROM schedules")[0]?.c || 0,
-    activeSchedules: queryAll("SELECT COUNT(*) as c FROM schedules WHERE status = 'active'")[0]?.c || 0,
-    templateCount: queryAll("SELECT COUNT(*) as c FROM templates")[0]?.c || 0,
-    errorsToday: queryAll("SELECT COUNT(*) as c FROM messages WHERE status = 'failed' AND date(time) = ?", [today])[0]?.c || 0,
-    errorsTotal: queryAll("SELECT COUNT(*) as c FROM messages WHERE status = 'failed'")[0]?.c || 0,
-    pendingPlans: PlanningSystem.plans.filter(p => p.status === 'pending').length,
-    completedPlans: PlanningSystem.plans.filter(p => p.status === 'completed').length
-  };
+function dbSave(table, data) {
+    const file = path.join(CONFIG.dbPath, table + '.json');
+    fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
-function startWebhookServer(port = WEBHOOK_PORT) {
-  if (webhookServer) return;
-  
-  webhookServer = http.createServer(async (req, res) => {
-    if (req.method === 'POST' && req.url.startsWith('/webhook/')) {
-      let body = '';
-      req.on('data', chunk => body += chunk);
-      req.on('end', async () => {
-        try {
-          const token = req.url.split('/webhook/')[1];
-          const update = JSON.parse(body);
-          
-          if (update.message) {
-            const bot = queryOne("SELECT id FROM bots WHERE token LIKE ?", ['%' + token]);
-            if (bot) {
-              const groups = queryAll("SELECT * FROM groups WHERE bot_id = ? AND status = 'active'", [bot.id]);
-              const group = groups.find(g => g.chat_id === update.message.chat.id.toString());
-              if (group) {
-                db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", 
-                  [group.id, update.message.text, 0, update.message.from.first_name || update.message.from.username, 'received']);
-                saveDatabase();
-                if (win && !win.isDestroyed()) win.webContents.send('tg:incoming', { groupId: group.id, text: update.message.text, time: getLocalTimestamp(), sender: update.message.from.first_name || update.message.from.username });
-              }
-            }
-          }
-          res.writeHead(200); res.end('OK');
-        } catch (e) { console.error('Webhook error:', e); res.writeHead(500); res.end('Error'); }
-      });
-    } else { res.writeHead(404); res.end('Not found'); }
-  });
-  
-  webhookServer.on('error', (err) => { if (err.code === 'EADDRINUSE') { console.log(`Порт ${port} занят, webhook сервер не запущен`); webhookServer = null; } });
-  webhookServer.listen(port, () => { console.log(`Webhook server started on port ${port}`); });
-}
-
-function registerIPCHandlers() {
-  ipcMain.handle('app:getVersion', () => ({ version: VERSION, updates: UPDATE_INFO, timezone: LOCAL_TZ, company: COMPANY_NAME }));
-  ipcMain.handle('app:getTime', () => ({ time: getLocalTime(), timestamp: getLocalTimestamp(), timezone: LOCAL_TZ }));
-  ipcMain.handle('app:getPermissions', (_, role) => ({ permissions: ROLE_PERMISSIONS[role] || ROLE_PERMISSIONS.user }));
-  ipcMain.handle('app:checkSchedule', () => checkAllSchedules());
-  ipcMain.handle('app:getMainAdmin', () => ({ login: MAIN_ADMIN_LOGIN }));
-  ipcMain.handle('app:getHelper', () => ({ login: HELPER_LOGIN }));
-  ipcMain.handle('app:reloadAll', () => { syncPolling(queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"), queryAll("SELECT * FROM groups WHERE status = 'active'")); return { success: true }; });
-  
-  ipcMain.handle('app:getWebSettings', () => {
-    const webPort = queryOne("SELECT value FROM settings WHERE key = 'web_port'")?.value || '8080';
-    const webEnabled = queryOne("SELECT value FROM settings WHERE key = 'web_enabled'")?.value || 'true';
-    return { port: parseInt(webPort), enabled: webEnabled === 'true', ip: getLocalIP() };
-  });
-  
-  ipcMain.handle('app:setWebSettings', async (_, { port, enabled }) => {
-    if (port) { runSql("INSERT OR REPLACE INTO settings (key, value) VALUES ('web_port', ?)", [port.toString()]); WEB_PORT = port; }
-    if (enabled !== undefined) runSql("INSERT OR REPLACE INTO settings (key, value) VALUES ('web_enabled', ?)", [enabled ? 'true' : 'false']);
-    if (enabled === false) stopWebServer(); else restartWebServer(WEB_PORT);
-    return { success: true, port: WEB_PORT, enabled: enabled !== false };
-  });
-  
-  ipcMain.handle('app:restartWeb', () => { restartWebServer(WEB_PORT); return { success: true }; });
-  
-  ipcMain.handle('schedule:getLogs', (_, filters) => ScheduleLogger.getLogs(filters));
-  ipcMain.handle('schedule:getErrors', () => ScheduleLogger.getErrors());
-  ipcMain.handle('schedule:getById', (_, scheduleId) => ScheduleLogger.getBySchedule(scheduleId));
-  
-  ipcMain.handle('planning:get', (_, filters) => ({ plans: PlanningSystem.getPlans(filters), dashboard: PlanningSystem.getDashboard() }));
-  ipcMain.handle('planning:add', (_, plan) => ({ success: true, plan: PlanningSystem.add(plan) }));
-  ipcMain.handle('planning:update', (_, { id, ...data }) => ({ success: true, plan: PlanningSystem.update(id, data) }));
-  ipcMain.handle('planning:delete', (_, id) => { PlanningSystem.delete(id); return { success: true }; });
-  ipcMain.handle('planning:getDashboard', () => PlanningSystem.getDashboard());
-  
-  ipcMain.handle('data:export', async () => { try { return { success: true, data: { bots: queryAll("SELECT id, name, token, online, status, created_at FROM bots").map(b => ({...b, token: decrypt(b.token)})), groups: queryAll("SELECT g.id, g.name, g.chat_id, g.bot_id, g.topic_ids, g.status, g.created_at, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id"), schedules: queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id"), users: queryAll("SELECT id, login, role, status, created_at FROM users"), templates: queryAll("SELECT * FROM templates"), planning: PlanningSystem.plans } }; } catch (err) { return { success: false, error: err.message }; } });
-  ipcMain.handle('data:import', async (_, { bots, groups, schedules, users, templates, planning }) => { try { 
-    if (bots) for (const b of bots) if (b.name && b.token) try { db.run("INSERT OR IGNORE INTO bots (name, token, online, status) VALUES (?, ?, ?, ?)", [b.name, encrypt(b.token), b.online ? 1 : 0, b.status || 'active']); } catch(e) {} 
-    if (groups) for (const g of groups) if (g.name && g.chat_id && g.bot_id) try { db.run("INSERT OR IGNORE INTO groups (name, chat_id, bot_id, topic_ids, status) VALUES (?, ?, ?, ?, ?)", [g.name, g.chat_id, g.bot_id, g.topic_ids || null, g.status || 'active']); } catch(e) {} 
-    if (schedules) for (const s of schedules) if (s.name && s.text && s.group_id && s.bot_id) try { db.run("INSERT OR IGNORE INTO schedules (name, text, group_id, bot_id, scheduled_time, repeat_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)", [s.name, s.text, s.group_id, s.bot_id, s.scheduled_time, s.repeat_type || 'once', s.status || 'active']); } catch(e) {} 
-    if (templates) for (const t of templates) if (t.name && t.content) try { db.run("INSERT OR IGNORE INTO templates (name, content) VALUES (?, ?)", [t.name, t.content]); } catch(e) {} 
-    if (planning) for (const p of planning) try { PlanningSystem.add(p); } catch(e) {} 
-    saveDatabase(); return { success: true }; 
-  } catch (err) { return { success: false, error: err.message }; } });
-  
-  ipcMain.handle('data:exportExcel', async (_, { type, groupId }) => {
-    try {
-      let items = [];
-      if (type === 'messages' && groupId) items = queryAll("SELECT * FROM messages WHERE group_id = ? ORDER BY time DESC", [groupId]);
-      else if (type === 'bots') items = queryAll("SELECT * FROM bots ORDER BY id");
-      else if (type === 'groups') items = queryAll("SELECT g.*, b.name as bot_name FROM groups g LEFT JOIN bots b ON g.bot_id = b.id ORDER BY g.id");
-      else if (type === 'schedules') items = queryAll("SELECT s.*, g.name as group_name, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id ORDER BY s.id");
-      else if (type === 'users') items = queryAll("SELECT * FROM users ORDER BY id");
-      else if (type === 'activity') items = queryAll("SELECT a.*, u.login FROM activity_log a LEFT JOIN users u ON a.user_id = u.id ORDER BY a.created_at DESC LIMIT 500");
-      else if (type === 'planning') items = PlanningSystem.getPlans();
-      
-      const csv = generateExcel({ type, items });
-      return { success: true, csv, filename: `hubpro_${type}_${new Date().toISOString().split('T')[0]}.csv` };
-    } catch (err) { return { success: false, error: err.message }; }
-  });
-  
-  ipcMain.handle('auth:login', (_, { login, password }) => { 
-    const user = queryOne("SELECT * FROM users WHERE login = ?", [login]); 
-    if (!user) return { success: false, error: 'Пользователь не найден' }; 
-    if (user.password !== hashPassword(password)) return { success: false, error: 'Неверный пароль' }; 
-    if (user.delete_request === 1) return { success: false, error: 'Аккаунт отмечен на удаление' }; 
-    if (user.status !== 'active') return { success: false, error: 'Аккаунт заблокирован' }; 
-    AIMonitor.log('LOGIN', user.id, `Пользователь ${user.login} вошёл`, 'low');
-    logActivity(user.id, 'LOGIN', `Вход в систему`);
-    showNotification('HubPro', `${user.login} вошёл в систему`);
-    return { success: true, user: { id: user.id, login: user.login, role: user.role }, permissions: ROLE_PERMISSIONS[user.role] || ROLE_PERMISSIONS.user }; 
-  });
-  
-  ipcMain.handle('auth:getUsers', () => queryAll("SELECT id, login, role, status, created_at, delete_request FROM users ORDER BY id"));
-  
-  ipcMain.handle('auth:addUser', (_, { login, password, role, currentUserRole, currentUserId, currentUserLogin }) => { 
-    if (login === HELPER_LOGIN && currentUserRole !== 'admin') return { success: false, error: 'Только главный админ может создать резервного пользователя' };
-    if (currentUserRole !== 'admin') return { success: false, error: 'Нет прав' }; 
-    const exists = queryOne("SELECT id FROM users WHERE login = ?", [login]);
-    if (exists) return { success: false, error: 'Логин занят' }; 
-    AIMonitor.log('ADD_USER', null, `Создан пользователь: ${login}`, role === 'admin' ? 'high' : 'low');
-    logActivity(null, 'ADD_USER', `Создан пользователь ${login}`);
-    return runSql("INSERT INTO users (login, password, role, status) VALUES (?, ?, ?, ?)", [login, hashPassword(password), role || 'user', 'active']); 
-  });
-  
-  ipcMain.handle('auth:updateUser', (_, { id, login, password, currentUserId, currentUserRole, currentUserLogin }) => { 
-    const targetUser = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
-    if (!targetUser) return { success: false, error: 'Пользователь не найден' }; 
+// ==================== EXCEL ====================
+async function loadExcel(table) {
+    const file = path.join(CONFIG.excelPath, table + '.xlsx');
+    if (!fs.existsSync(file)) return [];
     
-    if (targetUser.login === HELPER_LOGIN) {
-      if (currentUserLogin !== MAIN_ADMIN_LOGIN) return { success: false, error: 'Только главный админ NeuralAP может изменить резервного пользователя' };
-    }
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(file);
+    const ws = workbook.getWorksheet(1);
+    const data = [];
     
-    if (targetUser.login === MAIN_ADMIN_LOGIN && currentUserLogin !== MAIN_ADMIN_LOGIN) {
-      return { success: false, error: 'Главный админ защищён' };
-    }
-    
-    if (login) { 
-      const exists = queryOne("SELECT id FROM users WHERE login = ? AND id != ?", [login, id]); 
-      if (exists) return { success: false, error: 'Логин занят' }; 
-      runSql("UPDATE users SET login = ? WHERE id = ?", [login, id]); 
-      logActivity(currentUserId, 'CHANGE_LOGIN', `Смена логина ${id}`); 
-    } 
-    if (password) { 
-      runSql("UPDATE users SET password = ? WHERE id = ?", [hashPassword(password), id]); 
-      logActivity(currentUserId, 'CHANGE_PASSWORD', `Смена пароля ${id}`); 
-    } 
-    return { success: true }; 
-  });
-  
-  ipcMain.handle('auth:deleteUser', (_, { id, currentUserRole, currentUserId, currentUserLogin }) => { 
-    if (currentUserRole !== 'admin') return { success: false, error: 'Нет прав' }; 
-    const target = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
-    
-    if (target?.login === MAIN_ADMIN_LOGIN) { AIMonitor.log('SECURITY_ALERT', null, 'Попытка удаления главного админа', 'critical'); return { success: false, error: 'Главный админ защищён' }; }
-    if (target?.login === HELPER_LOGIN && currentUserLogin !== MAIN_ADMIN_LOGIN) return { success: false, error: 'Только NeuralAP может удалить резервного пользователя' };
-    if (id === currentUserId) return { success: false, error: 'Нельзя удалить себя' };
-    AIMonitor.log('DELETE_USER', null, `Удалён пользователь ${id}`, 'medium'); 
-    logActivity(null, 'DELETE_USER', `Удалён пользователь ${id}`); 
-    const result = runSql("DELETE FROM users WHERE id = ?", [id]);
-    if (result.success) syncPolling(queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"), queryAll("SELECT * FROM groups WHERE status = 'active'"));
-    return result; 
-  });
-  
-  ipcMain.handle('auth:toggleUserStatus', (_, { id, status, currentUserRole, currentUserId, currentUserLogin }) => { 
-    const target = queryOne("SELECT * FROM users WHERE id = ?", [id]); 
-    
-    if (target?.login === MAIN_ADMIN_LOGIN) {
-      if (currentUserLogin !== MAIN_ADMIN_LOGIN) return { success: false, error: 'Только NeuralAP может заблокировать главного админа' };
-    }
-    
-    if (target?.login === HELPER_LOGIN) {
-      if (currentUserLogin !== MAIN_ADMIN_LOGIN) return { success: false, error: 'Только NeuralAP может заблокировать резервного пользователя' };
-    }
-    
-    if (currentUserLogin === HELPER_LOGIN && status === 'active') {
-      // Разрешаем
-    } else if (currentUserRole !== 'admin' && currentUserRole !== 'helper') {
-      return { success: false, error: 'Нет прав' };
-    }
-    
-    if (id === currentUserId) return { success: false, error: 'Нельзя заблокировать себя' };
-    AIMonitor.log(status === 'active' ? 'UNBLOCK_USER' : 'BLOCK_USER', null, `Пользователь ${id}: ${status}`, status === 'inactive' ? 'medium' : 'low'); 
-    logActivity(null, status === 'active' ? 'UNBLOCK_USER' : 'BLOCK_USER', `Пользователь ${id}: ${status}`); 
-    return runSql("UPDATE users SET status = ? WHERE id = ?", [status, id]); 
-  });
-  
-  ipcMain.handle('ai:getLogs', () => AIMonitor.getLogs());
-  ipcMain.handle('ai:getAlerts', () => AIMonitor.getAlerts());
-  ipcMain.handle('auth:getActivityLog', () => queryAll("SELECT a.*, u.login FROM activity_log a LEFT JOIN users u ON a.user_id = u.id ORDER BY a.created_at DESC LIMIT 100"));
-  
-  ipcMain.handle('db:getBots', () => queryAll("SELECT * FROM bots ORDER BY id").map(b => ({ ...b, token: decrypt(b.token) })));
-  ipcMain.handle('db:addBot', (_, { name, token }) => { try { db.run("INSERT INTO bots (name, token, status) VALUES (?, ?, ?)", [name, encrypt(token), 'active']); const lastId = queryOne("SELECT last_insert_rowid() as id"); AIMonitor.log('ADD_BOT', null, `Добавлен бот: ${name}`, 'medium'); logActivity(null, 'ADD_BOT', `Добавлен бот ${name}`); saveDatabase(); return { success: true, id: lastId.id }; } catch (err) { return { success: false, error: err.message }; } });
-  ipcMain.handle('db:updateBot', (_, { id, name, token, status }) => { if (token) return runSql("UPDATE bots SET name = ?, token = ?, status = ? WHERE id = ?", [name, encrypt(token), status || 'active', id]); else return runSql("UPDATE bots SET name = ?, status = ? WHERE id = ?", [name, status || 'active', id]); });
-  ipcMain.handle('db:deleteBot', (_, id) => { AIMonitor.log('DELETE_BOT', null, `Удалён бот ${id}`, 'medium'); logActivity(null, 'DELETE_BOT', `Удалён бот ${id}`); const result = runSql("DELETE FROM bots WHERE id = ?", [id]); if (result.success) syncPolling(queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"), queryAll("SELECT * FROM groups WHERE status = 'active'")); return result; });
-  ipcMain.handle('db:toggleBotStatus', (_, { id, status }) => runSql("UPDATE bots SET status = ? WHERE id = ?", [status, id]));
-  
-  ipcMain.handle('db:getGroups', () => queryAll("SELECT g.*, b.name as bot_name, b.token as bot_token FROM groups g LEFT JOIN bots b ON g.bot_id = b.id ORDER BY g.id"));
-  ipcMain.handle('db:addGroup', (_, { name, chatId, botId, topicIds }) => { try { db.run("INSERT INTO groups (name, chat_id, bot_id, topic_ids, status) VALUES (?, ?, ?, ?, ?)", [name, chatId, botId, topicIds || null, 'active']); const lastId = queryOne("SELECT last_insert_rowid() as id"); AIMonitor.log('ADD_GROUP', null, `Добавлена группа: ${name}`, 'low'); logActivity(null, 'ADD_GROUP', `Добавлена группа ${name}`); saveDatabase(); return { success: true, id: lastId.id }; } catch (err) { return { success: false, error: err.message }; } });
-  
-  // ИСПРАВЛЕНО: Добавлен syncPolling после updateGroup
-  ipcMain.handle('db:updateGroup', (_, { id, name, chatId, botId, topicIds, status }) => { 
-    const result = runSql("UPDATE groups SET name = ?, chat_id = ?, bot_id = ?, topic_ids = ?, status = ? WHERE id = ?", [name, chatId, botId, topicIds || null, status || 'active', id]);
-    // Обновляем polling после изменения группы
-    if (result.success) {
-      const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'");
-      const groups = queryAll("SELECT * FROM groups WHERE status = 'active'");
-      syncPolling(bots, groups);
-    }
-    return result;
-  });
-  
-  ipcMain.handle('db:deleteGroup', (_, id) => { AIMonitor.log('DELETE_GROUP', null, `Удалена группа ${id}`, 'medium'); logActivity(null, 'DELETE_GROUP', `Удалена группа ${id}`); return runSql("DELETE FROM groups WHERE id = ?", [id]); });
-  ipcMain.handle('db:toggleGroupStatus', (_, { id, status }) => runSql("UPDATE groups SET status = ? WHERE id = ?", [status, id]));
-  
-  ipcMain.handle('db:getMessages', (_, groupId) => queryAll("SELECT * FROM messages WHERE group_id = ? ORDER BY time ASC", [groupId]));
-  ipcMain.handle('db:addMessage', (_, { groupId, text, sent, sender, status }) => { try { db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [groupId, text, sent ? 1 : 0, sender || null, status || 'sent']); saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
-  ipcMain.handle('db:clearMessages', (_, groupId) => { if (groupId) return runSql("DELETE FROM messages WHERE group_id = ?", [groupId]); else return runSql("DELETE FROM messages"); });
-  
-  ipcMain.handle('db:getSchedules', () => queryAll("SELECT s.*, g.name as group_name, g.chat_id, b.name as bot_name FROM schedules s LEFT JOIN groups g ON s.group_id = g.id LEFT JOIN bots b ON s.bot_id = b.id ORDER BY s.id"));
-  ipcMain.handle('db:getScheduleLogs', (_, scheduleId) => queryAll("SELECT * FROM schedule_logs WHERE schedule_id = ? ORDER BY executed_at DESC LIMIT 50", [scheduleId]));
-  ipcMain.handle('db:addSchedule', (_, { name, text, groupId, botId, scheduledTime, repeatType }) => { 
-    try { 
-      db.run("INSERT INTO schedules (name, text, group_id, bot_id, scheduled_time, repeat_type, status) VALUES (?, ?, ?, ?, ?, ?, ?)", [name, text, groupId, botId, scheduledTime, repeatType, 'active']); 
-      const lastId = queryOne("SELECT last_insert_rowid() as id"); 
-      AIMonitor.log('ADD_SCHEDULE', null, `Создано расписание: ${name}`, 'low'); 
-      logActivity(null, 'ADD_SCHEDULE', `Создано расписание ${name}`); 
-      ScheduleLogger.add(lastId.id, name, 'created', `Создано расписание: ${name}`, 'success');
-      saveDatabase(); 
-      return { success: true, id: lastId.id }; 
-    } catch (err) { return { success: false, error: err.message }; } 
-  });
-  ipcMain.handle('db:updateSchedule', (_, { id, name, text, groupId, botId, scheduledTime, repeatType }) => runSql("UPDATE schedules SET name = ?, text = ?, group_id = ?, bot_id = ?, scheduled_time = ?, repeat_type = ? WHERE id = ?", [name, text, groupId, botId, scheduledTime, repeatType, id]));
-  ipcMain.handle('db:deleteSchedule', (_, id) => { 
-    const schedule = queryOne("SELECT * FROM schedules WHERE id = ?", [id]);
-    logActivity(null, 'DELETE_SCHEDULE', `Удалено расписание ${id}`);
-    if (schedule) ScheduleLogger.add(id, schedule.name, 'deleted', `Удалено расписание: ${schedule.name}`, 'success');
-    return runSql("DELETE FROM schedules WHERE id = ?", [id]); 
-  });
-  ipcMain.handle('db:toggleSchedule', (_, { id, status }) => runSql("UPDATE schedules SET status = ? WHERE id = ?", [status, id]));
-  ipcMain.handle('db:resetSchedule', (_, id) => runSql("UPDATE schedules SET last_executed = NULL WHERE id = ?", [id]));
-  
-  ipcMain.handle('db:getTemplates', () => queryAll("SELECT * FROM templates ORDER BY id"));
-  ipcMain.handle('db:addTemplate', (_, { name, content }) => { try { db.run("INSERT INTO templates (name, content) VALUES (?, ?)", [name, content]); saveDatabase(); return { success: true }; } catch (err) { return { success: false, error: err.message }; } });
-  ipcMain.handle('db:updateTemplate', (_, { id, name, content }) => runSql("UPDATE templates SET name = ?, content = ? WHERE id = ?", [name, content, id]));
-  ipcMain.handle('db:deleteTemplate', (_, id) => runSql("DELETE FROM templates WHERE id = ?", [id]));
-  
-  ipcMain.handle('db:getStats', () => getStats());
-  
-  ipcMain.handle('notifications:send', (_, { userId, fromId, text, type }) => runSql("INSERT INTO notifications (user_id, from_id, text, type) VALUES (?, ?, ?, ?)", [userId, fromId, text, type || 'message']));
-  ipcMain.handle('notifications:get', (_, userId) => queryAll("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50", [userId]));
-  ipcMain.handle('notifications:markRead', (_, id) => runSql("UPDATE notifications SET read = 1 WHERE id = ?", [id]));
-  ipcMain.handle('notifications:getUnreadCount', (_, userId) => ({ count: queryAll("SELECT COUNT(*) as c FROM notifications WHERE user_id = ? AND read = 0", [userId])[0]?.c || 0 }));
-  
-  ipcMain.on('tg:sync-config', async () => { const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"); const groups = queryAll("SELECT * FROM groups WHERE status = 'active'"); syncPolling(bots, groups); });
-  ipcMain.handle('tg:send', async (_, { token, chatId, text, topicIds }) => { 
-    try { 
-      const me = await (await fetch(`https://api.telegram.org/bot${token}/getMe`)).json(); 
-      if (!me.ok) return { ok: false, description: 'Неверный токен' }; 
-      const chat = await (await fetch(`https://api.telegram.org/bot${token}/getChat?chat_id=${chatId}`)).json(); 
-      if (!chat.ok) return { ok: false, description: 'Бот не в группе' }; 
-      if (topicIds && Array.isArray(topicIds) && topicIds.length > 0) { 
-        const results = []; 
-        for (const tid of topicIds) results.push(await (await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text, message_thread_id: tid, parse_mode: 'HTML' }) })).json()); 
-        return { ok: results.every(r => r.ok), results }; 
-      } 
-      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }) }); 
-      return await res.json(); 
-    } catch (err) { return { ok: false, description: err.message }; } 
-  });
-  
-  ipcMain.handle('tg:sendMulti', async (_, { groupIds, text }) => {
-    const results = [];
-    for (const groupId of groupIds) {
-      const g = queryOne("SELECT g.*, b.token as bot_token FROM groups g LEFT JOIN bots b ON g.bot_id = b.id WHERE g.id = ?", [groupId]);
-      if (g && g.bot_token) {
-        try {
-          const token = decrypt(g.bot_token);
-          const res = await (await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: g.chat_id, text, parse_mode: 'HTML' }) })).json();
-          results.push({ groupId, groupName: g.name, success: res.ok, error: res.description });
-          if (res.ok) db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [groupId, text, 1, 'HubPro (мульти)', 'sent']);
-          else db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [groupId, text, 0, 'HubPro (мульти)', 'failed']);
-        } catch (e) { results.push({ groupId, groupName: g.name, success: false, error: e.message }); }
-      } else { results.push({ groupId, groupName: g?.name || 'Unknown', success: false, error: 'Бот не найден' }); }
-    }
-    saveDatabase();
-    return { success: true, results };
-  });
-  
-  ipcMain.handle('tg:checkBot', async (_, token) => { try { return await (await fetch(`https://api.telegram.org/bot${token}/getMe`)).json(); } catch (err) { return { ok: false, error: err.message }; } });
-  ipcMain.handle('tg:getTopics', async (_, { token, chatId }) => { try { const data = await (await fetch(`https://api.telegram.org/bot${token}/getForumTopics?chat_id=${chatId}`)).json(); return data.ok ? { ok: true, topics: data.topics || [] } : { ok: false, error: data.description }; } catch (err) { return { ok: false, error: err.message }; } });
-  
-  console.log('IPC handlers registered');
-}
-
-function checkAllSchedules() {
-  try {
-    const now = new Date();
-    const currentHour = String(now.getHours()).padStart(2, '0');
-    const currentMinute = String(now.getMinutes()).padStart(2, '0');
-    const currentTime = `${currentHour}:${currentMinute}`;
-    const currentDate = now.toISOString().split('T')[0];
-    
-    const schedules = queryAll("SELECT * FROM schedules WHERE status = 'active'");
-    let executed = 0;
-    
-    for (const s of schedules) {
-      let scheduleTime = s.scheduled_time;
-      if (scheduleTime && scheduleTime.includes('T')) scheduleTime = scheduleTime.split('T')[1].substring(0, 5);
-      
-      if (scheduleTime === currentTime) {
-        if (s.repeat_type === 'once') {
-          if (s.scheduled_time && s.scheduled_time.startsWith(currentDate)) {
-            if (!s.last_executed || s.last_executed === null) {
-              executeSchedule(s);
-              executed++;
-            }
-          }
-        } else {
-          if (!s.last_executed) {
-            executeSchedule(s);
-            executed++;
-          } else {
-            const lastExec = new Date(s.last_executed);
-            const diffMs = now.getTime() - lastExec.getTime();
-            const diffMins = Math.floor(diffMs / 60000);
-            
-            let shouldExecute = false;
-            if (s.repeat_type === 'daily' && diffMins >= 1440) shouldExecute = true;
-            if (s.repeat_type === 'weekly' && diffMins >= 10080) shouldExecute = true;
-            if (s.repeat_type === 'monthly') {
-              const lastMonth = lastExec.getMonth();
-              if (lastMonth !== now.getMonth()) shouldExecute = true;
-            }
-            if (s.repeat_type === 'hourly' && diffMins >= 60) shouldExecute = true;
-            
-            if (shouldExecute) {
-              executeSchedule(s);
-              executed++;
-            }
-          }
+    ws.eachRow((row, rowNum) => {
+        if (rowNum > 1) {
+            const obj = {};
+            row.eachCell((cell, colNum) => {
+                const header = ws.getRow(1).getCell(colNum).value;
+                obj[header] = cell.value;
+            });
+            data.push(obj);
         }
-      }
+    });
+    return data;
+}
+
+async function saveExcel(table, data) {
+    const file = path.join(CONFIG.excelPath, table + '.xlsx');
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet(table);
+    
+    if (data.length > 0) {
+        const headers = Object.keys(data[0]);
+        ws.addRow(headers);
+        
+        data.forEach(row => {
+            ws.addRow(headers.map(h => row[h]));
+        });
     }
     
-    if (executed > 0) console.log(`Выполнено расписаний: ${executed}`);
-    return { success: true, executed };
-  } catch (e) {
-    console.error('Ошибка расписания:', e);
-    return { success: false, error: e.message };
-  }
+    await workbook.xlsx.writeFile(file);
 }
 
-async function executeSchedule(s) {
-  try { 
-    const bot = queryOne("SELECT * FROM bots WHERE id = ?", [s.bot_id]); 
-    const group = queryOne("SELECT * FROM groups WHERE id = ?", [s.group_id]); 
-    if (!bot || !group) {
-      ScheduleLogger.add(s.id, s.name, 'error', 'Бот или группа не найдены', 'error', 'Bot or group not found');
-      return; 
+// ==================== API ====================
+const app = express();
+app.use(bodyParser.json());
+app.use(express.static(path.join(__dirname, 'renderer')));
+
+
+// Auth middleware
+function auth(req, res, next) {
+    const token = req.headers.authorization;
+    if (!token) return res.status(401).json({ error: 'Нет токена' });
+    
+    try {
+        const user = JSON.parse(Buffer.from(token, 'base64').toString());
+        req.user = user;
+        next();
+    } catch (e) {
+        res.status(401).json({ error: 'Неверный токен' });
     }
-    
-    const token = decrypt(bot.token);
-    const res = await (await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { 
-      method: 'POST', 
-      headers: { 'Content-Type': 'application/json' }, 
-      body: JSON.stringify({ chat_id: group.chat_id, text: s.text, parse_mode: 'HTML' }) 
-    })).json();
-    
-    if (res.ok) { 
-      db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'success', null]); 
-      db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [group.id, s.text, 1, 'HubPro (авто)', 'sent']); 
-      db.run("UPDATE schedules SET last_executed = ? WHERE id = ?", [new Date().toISOString(), s.id]); 
-      ScheduleLogger.add(s.id, s.name, 'executed', `Выполнено: ${s.text}`, 'success');
-      if (win && !win.isDestroyed()) win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: true, message: 'Сообщение отправлено' });
-      showNotification('HubPro', `Расписание "${s.name}" выполнено`);
-    } else { 
-      db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'error', res.description]); 
-      db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [group.id, s.text, 0, 'HubPro (авто)', 'failed']); 
-      ScheduleLogger.add(s.id, s.name, 'error', `Ошибка отправки: ${s.text}`, 'error', res.description);
-      if (win && !win.isDestroyed()) win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: false, error: res.description });
-      showNotification('HubPro', `Ошибка расписания: ${res.description}`);
-    } 
-  } catch (e) { 
-    db.run("INSERT INTO schedule_logs (schedule_id, status, error) VALUES (?, ?, ?)", [s.id, 'error', e.message]); 
-    ScheduleLogger.add(s.id, s.name, 'error', `Исключение: ${s.text}`, 'error', e.message);
-    if (win && !win.isDestroyed()) win.webContents.send('tg:scheduleExecuted', { scheduleId: s.id, success: false, error: e.message });
-    showNotification('HubPro', `Ошибка: ${e.message}`);
-  } 
-  saveDatabase(); 
 }
 
-function setupAutoUpdater() {
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.logger = require('electron-log');
-  autoUpdater.feedUrl = 'https://github.com/smol0901-jpg/HubPro/releases/latest';
-  
-  autoUpdater.on('checking-for-update', () => { console.log('Проверка обновлений...'); });
-  autoUpdater.on('update-available', (info) => {
-    console.log('Доступно обновление:', info.version);
-    if (win?.webContents) win.webContents.send('update-available', info);
-    showNotification('HubPro', `Доступно обновление v${info.version}`);
-  });
-  autoUpdater.on('update-not-available', () => { console.log('Обновлений нет'); });
-  autoUpdater.on('download-progress', (progress) => { console.log(`Загрузка: ${progress.percent.toFixed(1)}%`); });
-  autoUpdater.on('update-downloaded', (info) => {
-    if (win?.webContents) win.webContents.send('update-downloaded', info);
-    dialog.showMessageBox(win, { type: 'info', title: 'Обновление', message: `Загружена версия ${info.version}. Перезапустить?`, buttons: ['Да', 'Нет'] }).then(r => { if (r.response === 0) autoUpdater.quitAndInstall(); });
-  });
-  autoUpdater.on('error', (e) => { console.error('Ошибка обновления:', e); });
-  
-  if (app.isPackaged) autoUpdater.checkForUpdatesAndNotify();
-}
-
-autoUpdater.autoDownload = true; autoUpdater.autoInstallOnAppQuit = true;
-app.whenReady().then(async () => { 
-  db = await initDatabase(); 
-  registerIPCHandlers(); 
-  createWindow(); 
-  await createTray(); 
-  setupAutoUpdater(); 
-  startScheduleChecker(); 
-  startWebhookServer(WEBHOOK_PORT);
-  
-  const webPortSetting = queryOne("SELECT value FROM settings WHERE key = 'web_port'");
-  const webEnabledSetting = queryOne("SELECT value FROM settings WHERE key = 'web_enabled'");
-  WEB_PORT = parseInt(webPortSetting?.value) || 8080;
-  const webEnabled = webEnabledSetting?.value !== 'false';
-  
-  if (webEnabled) startWebServer(WEB_PORT);
-  
-  checkAllSchedules();
-  
-  const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"); 
-  const groups = queryAll("SELECT * FROM groups WHERE status = 'active'"); 
-  syncPolling(bots, groups); 
-  
-  showNotification('HubPro', `${COMPANY_NAME} v${VERSION} запущен`);
+// Login
+app.post('/api/login', async (req, res) => {
+    const { login, password } = req.body;
+    const users = await loadExcel('users');
+    const user = users.find(u => u.login === login && u.password === password);
+    
+    if (user) {
+        const token = Buffer.from(JSON.stringify(user)).toString('base64');
+        res.json({ success: true, user, token });
+    } else {
+        res.json({ success: false, error: 'Неверный логин или пароль' });
+    }
 });
 
-function createWindow() { 
-  win = new BrowserWindow({ 
-    width: 1400, 
-    height: 900, 
-    title: `${COMPANY_NAME} v${VERSION}`, 
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false }, 
-    show: false 
-  }); 
-  win.loadFile('renderer/index.html'); 
-  win.once('ready-to-show', () => win.show()); 
-  win.on('close', (event) => {
-    if (!app.isQuitting) {
-      event.preventDefault();
-      win.hide();
-      showNotification('HubPro', 'Приложение свёрнуто в трей');
+// Get Data
+app.get('/api/getData', auth, async (req, res) => {
+    const [bots, groups, schedules, templates, users, messages, notifications, ai_tasks, error_logs, settings] = await Promise.all([
+        loadExcel('bots'), loadExcel('groups'), loadExcel('schedules'), 
+        loadExcel('templates'), loadExcel('users'), loadExcel('messages'),
+        loadExcel('notifications'), loadExcel('ai_tasks'), loadExcel('error_logs'), loadExcel('settings')
+    ]);
+    
+    res.json({
+        bots, groups, schedules, templates, users, messages, notifications, ai_tasks, error_logs, settings,
+        stats: {
+            botCount: bots.length,
+            activeBots: bots.filter(b => b.status === 'active').length,
+            groupCount: groups.length,
+            activeGroups: groups.filter(g => g.status === 'active').length,
+            messageCount: messages.length,
+            messagesToday: messages.filter(m => new Date(m.time).toDateString() === new Date().toDateString()).length,
+            userCount: users.length,
+            activeUsers: users.filter(u => u.status === 'active').length,
+            scheduleCount: schedules.length,
+            activeSchedules: schedules.filter(s => s.status === 'active').length,
+            aiTasksPending: ai_tasks.filter(t => t.status === 'pending').length,
+            aiTasksActive: ai_tasks.filter(t => t.status === 'active').length
+        }
+    });
+});
+
+// Bots
+app.post('/api/bots:add', auth, async (req, res) => {
+    const bots = await loadExcel('bots');
+    const newBot = { id: Date.now(), ...req.body, status: 'active', created_at: new Date().toISOString() };
+    bots.push(newBot);
+    await saveExcel('bots', bots);
+    res.json({ success: true });
+});
+
+app.post('/api/bots:delete', auth, async (req, res) => {
+    const bots = await loadExcel('bots');
+    const filtered = bots.filter(b => b.id != req.query.id);
+    await saveExcel('bots', filtered);
+    res.json({ success: true });
+});
+
+// Groups
+app.post('/api/groups:add', auth, async (req, res) => {
+    const groups = await loadExcel('groups');
+    const bots = await loadExcel('bots');
+    const bot = bots.find(b => b.id == req.body.bot_id);
+    const newGroup = { 
+        id: Date.now(), 
+        ...req.body, 
+        bot_name: bot?.name || '',
+        status: 'active', 
+        created_at: new Date().toISOString() 
+    };
+    groups.push(newGroup);
+    await saveExcel('groups', groups);
+    syncPolling();
+    res.json({ success: true });
+});
+
+app.post('/api/groups:delete', auth, async (req, res) => {
+    const groups = await loadExcel('groups');
+    const filtered = groups.filter(g => g.id != req.query.id);
+    await saveExcel('groups', filtered);
+    res.json({ success: true });
+});
+
+// Messages
+app.post('/api/filterMessages', auth, async (req, res) => {
+    const { filter, groupId } = req.body;
+    let messages = await loadExcel('messages');
+    messages = messages.filter(m => m.group_id == groupId);
+    
+    if (filter?.search) {
+        const s = filter.search.toLowerCase();
+        messages = messages.filter(m => m.text?.toLowerCase().includes(s));
     }
-  });
+    
+    if (filter?.period === 'today') {
+        messages = messages.filter(m => new Date(m.time).toDateString() === new Date().toDateString());
+    } else if (filter?.period === 'week') {
+        const weekAgo = new Date();
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        messages = messages.filter(m => new Date(m.time) >= weekAgo);
+    } else if (filter?.period === 'month') {
+        const monthAgo = new Date();
+        monthAgo.setMonth(monthAgo.getMonth() - 1);
+        messages = messages.filter(m => new Date(m.time) >= monthAgo);
+    }
+    
+    messages.sort((a, b) => new Date(b.time) - new Date(a.time));
+    res.json(messages);
+});
+
+app.post('/api/sendMessage', auth, async (req, res) => {
+    const { groupId, text, sender } = req.body;
+    const groups = await loadExcel('groups');
+    const bots = await loadExcel('bots');
+    const group = groups.find(g => g.id == groupId);
+    const bot = bots.find(b => b.id == group.bot_id);
+    
+    if (!group || !bot) return res.json({ success: false, error: 'Группа или бот не найдены' });
+    
+    try {
+        const telegraf = new Telegraf(decrypt(bot.token));
+        await telegraf.telegram.sendMessage(group.chat_id, text);
+        
+        const messages = await loadExcel('messages');
+        messages.push({
+            id: Date.now(),
+            group_id: groupId,
+            text,
+            sender,
+            sent: true,
+            time: new Date().toISOString()
+        });
+        await saveExcel('messages', messages);
+        
+        res.json({ success: true });
+    } catch (e) {
+        logError('ERR_API_TELEGRAM', e.message, 'Telegram');
+        res.json({ success: false, error: e.message });
+    }
+});
+
+// Schedules
+app.post('/api/schedules:add', auth, async (req, res) => {
+    const schedules = await loadExcel('schedules');
+    const groups = await loadExcel('groups');
+    const bots = await loadExcel('bots');
+    const group = groups.find(g => g.id == req.body.group_id);
+    const bot = bots.find(b => b.id == req.body.bot_id);
+    
+    const newSchedule = {
+        id: Date.now(),
+        ...req.body,
+        group_name: group?.name || '',
+        bot_name: bot?.name || '',
+        status: 'active',
+        last_run: null,
+        created_at: new Date().toISOString()
+    };
+    schedules.push(newSchedule);
+    await saveExcel('schedules', schedules);
+    setupSchedule(newSchedule);
+    res.json({ success: true });
+});
+
+app.post('/api/schedules:execute', auth, async (req, res) => {
+    const schedules = await loadExcel('schedules');
+    const schedule = schedules.find(s => s.id == req.query.id);
+    
+    if (schedule) {
+        await executeSchedule(schedule);
+        res.json({ success: true });
+    } else {
+        res.json({ success: false });
+    }
+});
+
+app.post('/api/schedules:delete', auth, async (req, res) => {
+    const schedules = await loadExcel('schedules');
+    const filtered = schedules.filter(s => s.id != req.query.id);
+    await saveExcel('schedules', filtered);
+    res.json({ success: true });
+});
+
+// Templates
+app.post('/api/templates:add', auth, async (req, res) => {
+    const templates = await loadExcel('templates');
+    templates.push({ id: Date.now(), ...req.body, created_at: new Date().toISOString() });
+    await saveExcel('templates', templates);
+    res.json({ success: true });
+});
+
+app.post('/api/templates:delete', auth, async (req, res) => {
+    const templates = await loadExcel('templates');
+    const filtered = templates.filter(t => t.id != req.query.id);
+    await saveExcel('templates', filtered);
+    res.json({ success: true });
+});
+
+
+// Users
+app.post('/api/users:add', auth, async (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Нет прав' });
+    
+    const users = await loadExcel('users');
+    users.push({ id: Date.now(), ...req.body, status: 'active', created_at: new Date().toISOString() });
+    await saveExcel('users', users);
+    res.json({ success: true });
+});
+
+app.post('/api/users:delete', auth, async (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Нет прав' });
+    
+    const users = await loadExcel('users');
+    const filtered = users.filter(u => u.id != req.query.id);
+    await saveExcel('users', filtered);
+    res.json({ success: true });
+});
+
+// Notifications
+app.get('/api/getNotifications', auth, async (req, res) => {
+    const notifications = await loadExcel('notifications');
+    res.json(notifications.sort((a, b) => new Date(b.time) - new Date(a.time)));
+});
+
+// AI Settings
+app.get('/api/getAISettings', auth, async (req, res) => {
+    const settings = await loadExcel('settings');
+    const aiSettings = settings.find(s => s.key === 'ai');
+    res.json(aiSettings?.value || { enabled: false, autoExecute: false, allowedCommands: [], restrictedCommands: [], maxTasksPerHour: 10 });
+});
+
+app.post('/api/saveAISettings', auth, async (req, res) => {
+    const settings = await loadExcel('settings');
+    const idx = settings.findIndex(s => s.key === 'ai');
+    const newSetting = { key: 'ai', value: req.body, updated_at: new Date().toISOString() };
+    
+    if (idx >= 0) settings[idx] = newSetting;
+    else settings.push(newSetting);
+    
+    await saveExcel('settings', settings);
+    res.json({ success: true });
+});
+
+// AI Tasks
+app.get('/api/getAITasks', auth, async (req, res) => {
+    const tasks = await loadExcel('ai_tasks');
+    res.json(tasks);
+});
+
+app.post('/api/addAITask', auth, async (req, res) => {
+    const tasks = await loadExcel('ai_tasks');
+    tasks.push({ id: Date.now(), ...req.body, status: 'pending', created_at: new Date().toISOString() });
+    await saveExcel('ai_tasks', tasks);
+    res.json({ success: true });
+});
+
+app.post('/api/executeAITask', auth, async (req, res) => {
+    const tasks = await loadExcel('ai_tasks');
+    const task = tasks.find(t => t.id == req.body.id);
+    
+    if (task) {
+        task.status = 'active';
+        task.started_at = new Date().toISOString();
+        await saveExcel('ai_tasks', tasks);
+        
+        // Execute task
+        setTimeout(async () => {
+            task.status = 'completed';
+            task.completed_at = new Date().toISOString();
+            await saveExcel('ai_tasks', tasks);
+        }, 5000);
+        
+        res.json({ success: true });
+    } else {
+        res.json({ success: false });
+    }
+});
+
+app.post('/api/deleteAITask', auth, async (req, res) => {
+    const tasks = await loadExcel('ai_tasks');
+    const filtered = tasks.filter(t => t.id != req.body.id);
+    await saveExcel('ai_tasks', filtered);
+    res.json({ success: true });
+});
+
+
+// Neural Network
+app.post('/api/neuralSend', auth, async (req, res) => {
+    const settings = await loadExcel('settings');
+    const neuralSettings = settings.find(s => s.key === 'neural');
+    const apiKey = neuralSettings?.value?.apiKey;
+    const model = neuralSettings?.value?.model || 'gpt-3.5-turbo';
+    
+    if (!apiKey) return res.json({ success: false, error: 'API ключ не настроен' });
+    
+    try {
+        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+            model,
+            messages: [
+                { role: 'system', content: neuralSettings?.value?.systemPrompt || 'Ты помощник по управлению Telegram ботами' },
+                { role: 'user', content: req.body.message }
+            ]
+        }, {
+            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
+        });
+        
+        res.json({ success: true, response: response.data.choices[0].message.content });
+    } catch (e) {
+        logError('ERR_AI_TASK', e.message, 'Neural');
+        res.json({ success: false, error: e.message });
+    }
+});
+
+app.post('/api/neuralSetApiKey', auth, async (req, res) => {
+    const settings = await loadExcel('settings');
+    const idx = settings.findIndex(s => s.key === 'neural');
+    const current = settings.find(s => s.key === 'neural')?.value || {};
+    
+    const newSetting = { key: 'neural', value: { ...current, apiKey: req.body.apiKey }, updated_at: new Date().toISOString() };
+    
+    if (idx >= 0) settings[idx] = newSetting;
+    else settings.push(newSetting);
+    
+    await saveExcel('settings', settings);
+    res.json({ success: true });
+});
+
+app.post('/api/neuralSetModel', auth, async (req, res) => {
+    const settings = await loadExcel('settings');
+    const idx = settings.findIndex(s => s.key === 'neural');
+    const current = settings.find(s => s.key === 'neural')?.value || {};
+    
+    const newSetting = { key: 'neural', value: { ...current, model: req.body.model }, updated_at: new Date().toISOString() };
+    
+    if (idx >= 0) settings[idx] = newSetting;
+    else settings.push(newSetting);
+    
+    await saveExcel('settings', settings);
+    res.json({ success: true });
+});
+
+app.post('/api/neuralSetSystemPrompt', auth, async (req, res) => {
+    const settings = await loadExcel('settings');
+    const idx = settings.findIndex(s => s.key === 'neural');
+    const current = settings.find(s => s.key === 'neural')?.value || {};
+    
+    const newSetting = { key: 'neural', value: { ...current, systemPrompt: req.body.prompt }, updated_at: new Date().toISOString() };
+    
+    if (idx >= 0) settings[idx] = newSetting;
+    else settings.push(newSetting);
+    
+    await saveExcel('settings', settings);
+    res.json({ success: true });
+});
+
+app.post('/api/neuralClearHistory', auth, async (req, res) => {
+    res.json({ success: true });
+});
+
+// Error Logs
+app.get('/api/getErrorLogs', auth, async (req, res) => {
+    let logs = await loadExcel('error_logs');
+    
+    const { search, source, severity, resolved } = req.body || {};
+    
+    if (search) {
+        const s = search.toLowerCase();
+        logs = logs.filter(l => l.message?.toLowerCase().includes(s));
+    }
+    if (source) logs = logs.filter(l => l.source === source);
+    if (severity) logs = logs.filter(l => l.severity === severity);
+    if (resolved !== undefined) logs = logs.filter(l => l.resolved === !!resolved);
+    
+    res.json(logs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)));
+});
+
+app.post('/api/resolveError', auth, async (req, res) => {
+    const logs = await loadExcel('error_logs');
+    const log = logs.find(l => l.id == req.body.id);
+    
+    if (log) {
+        log.resolved = true;
+        log.resolved_by = req.body.userId;
+        log.resolved_at = new Date().toISOString();
+        await saveExcel('error_logs', logs);
+    }
+    
+    res.json({ success: true });
+});
+
+app.get('/api/exportExcel', auth, async (req, res) => {
+    const type = req.query.type;
+    const logs = await loadExcel('error_logs');
+    
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=${type}_${Date.now()}.xlsx`);
+    
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet(type);
+    
+    if (logs.length > 0) {
+        ws.addRow(Object.keys(logs[0]));
+        logs.forEach(row => ws.addRow(Object.values(row)));
+    }
+    
+    await workbook.xlsx.write(res);
+});
+
+// Web Settings
+app.get('/api/getWebSettings', auth, async (req, res) => {
+    const settings = await loadExcel('settings');
+    const webSettings = settings.find(s => s.key === 'web');
+    res.json(webSettings?.value || { enabled: true, port: CONFIG.webPort, ip: '127.0.0.1' });
+});
+
+app.post('/api/setWebSettings', auth, async (req, res) => {
+    const settings = await loadExcel('settings');
+    const idx = settings.findIndex(s => s.key === 'web');
+    const newSetting = { key: 'web', value: req.body, updated_at: new Date().toISOString() };
+    
+    if (idx >= 0) settings[idx] = newSetting;
+    else settings.push(newSetting);
+    
+    await saveExcel('settings', settings);
+    res.json({ success: true });
+});
+
+// ==================== ЛОГИРОВАНИЕ ОШИБОК ====================
+async function logError(code, message, source, details = null) {
+    const logs = await loadExcel('error_logs');
+    logs.push({
+        id: Date.now(),
+        error_code: code,
+        message,
+        source,
+        details,
+        severity: code.startsWith('ERR_') ? 'error' : 'warning',
+        resolved: false,
+        created_at: new Date().toISOString()
+    });
+    await saveExcel('error_logs', logs);
 }
 
-async function createTray() {
-  const buildDir = path.join(__dirname, 'build'); 
-  if (!fs.existsSync(buildDir)) fs.mkdirSync(buildDir, { recursive: true });
-  const iconPath = path.join(buildDir, 'icon.png');
-  if (!fs.existsSync(iconPath)) fs.writeFileSync(iconPath, Buffer.from([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,0x00,0x00,0x00,0x0D,0x49,0x48,0x44,0x52,0x00,0x00,0x00,0x10,0x00,0x00,0x00,0x10,0x08,0x06,0x00,0x00,0x00,0x1F,0xF3,0xFF,0x61,0x00,0x00,0x00,0x01,0x73,0x52,0x47,0x42,0x00,0xAE,0xCE,0x1C,0xE9,0x00,0x00,0x00,0x3D,0x49,0x44,0x41,0x54,0x38,0x4F,0x63,0x64,0x60,0x18,0x05,0xA3,0x00,0x31,0x80,0x98,0x98,0x98,0x98,0x18,0x05,0xA3,0x00,0x31,0x80,0x98,0x98,0x98,0x98,0x18,0x05,0xA3,0x00,0x31,0x80,0x98,0x98,0x98,0x98,0x18,0x05,0xA3,0x00,0x31,0x80,0x98,0x98,0x98,0x98,0x18,0x05,0xA3,0x00,0x00,0x0A,0x3F,0x04,0x1C,0xB8,0xD1,0x3E,0x00,0x00,0x00,0x00,0x49,0x45,0x4E,0x44,0xAE,0x42,0x60,0x82]));
-  
-  tray = new Tray(nativeImage.createFromPath(iconPath).isEmpty() ? nativeImage.createEmpty() : nativeImage.createFromPath(iconPath));
-  tray.setToolTip(`${COMPANY_NAME} v${VERSION}`);
-  
-  const contextMenu = Menu.buildFromTemplate([
-    { label: '📱 Открыть HubPro', click: () => { win.show(); win.focus(); } },
-    { type: 'separator' },
-    { label: '🌐 Веб-интерфейс', click: () => { require('electron').shell.openExternal(`http://localhost:${WEB_PORT}`); }},
-    { label: '🔄 Перезапустить polling', click: () => { const bots = queryAll("SELECT * FROM bots WHERE online = 1 AND status = 'active'"); const groups = queryAll("SELECT * FROM groups WHERE status = 'active'"); syncPolling(bots, groups); showNotification('HubPro', 'Polling перезапущен'); }},
-    { label: '📊 Проверить расписание', click: () => { const result = checkAllSchedules(); showNotification('HubPro', result.success ? `Проверка: ${result.executed} выполнено` : 'Ошибка'); } },
-    { type: 'separator' },
-    { label: '❌ Выход', click: () => { app.isQuitting = true; app.quit(); }}
-  ]);
-  
-  tray.setContextMenu(contextMenu);
-  tray.on('double-click', () => { win.show(); win.focus(); });
-  showNotification('HubPro', `${COMPANY_NAME} v${VERSION} запущен\nЧасовой пояс: ${LOCAL_TZ}`);
+// ==================== TELEGRAM POLLING ====================
+const bots = {};
+const pollingIntervals = {};
+
+function syncPolling() {
+    loadExcel('groups').then(groups => {
+        groups.forEach(group => {
+            if (group.bot_id && !pollingIntervals[group.id]) {
+                loadExcel('bots').then(botsList => {
+                    const bot = botsList.find(b => b.id == group.bot_id);
+                    if (bot) {
+                        startPolling(bot, group);
+                    }
+                });
+            }
+        });
+    });
 }
 
-function syncPolling(bots, groups) { 
-  Object.values(pollingIntervals).forEach(clearInterval); 
-  pollingIntervals = {}; 
-  botOffsets = {}; 
-  bots.forEach(bot => { 
-    const token = decrypt(bot.token); 
-    botOffsets[bot.id] = 0; 
-    const poll = async () => { 
-      try { 
-        const c = new AbortController(); 
-        const t = setTimeout(() => c.abort(), 10000); 
-        const data = await (await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${botOffsets[bot.id]}&timeout=10`, { signal: c.signal })).json(); 
-        clearTimeout(t); 
-        if (data.ok && data.result) data.result.forEach(u => { 
-          botOffsets[bot.id] = u.update_id + 1; 
-          if (u.message?.message?.text) { 
-            const g = groups.find(g => g.bot_id === bot.id && g.chat_id === u.message.chat.id.toString()); 
-            if (g) { 
-              db.run("INSERT INTO messages (group_id, text, sent, sender, status) VALUES (?, ?, ?, ?, ?)", [g.id, u.message.text, 0, u.message.from.first_name || u.message.from.username, 'received']); 
-              saveDatabase();
-              if (win && !win.isDestroyed()) win.webContents.send('tg:incoming', { groupId: g.id, text: u.message.text, time: getLocalTimestamp(), sender: u.message.from.first_name || u.message.from.username }); 
-            } 
-          } 
-        }); 
-      } catch (e) { if (e.name !== 'AbortError') console.log('Poll', bot.id, e.message); } 
-    }; 
-    pollingIntervals[bot.id] = setInterval(poll, 3000); 
-  }); 
-  saveDatabase(); 
+function startPolling(bot, group) {
+    try {
+        const telegraf = new Telegraf(decrypt(bot.token));
+        
+        telegraf.on('message', async (ctx) => {
+            const messages = await loadExcel('messages');
+            messages.push({
+                id: Date.now(),
+                group_id: group.id,
+                text: ctx.message.text || ctx.message.caption || '[Медиа]',
+                sender: ctx.from.first_name || ctx.from.username || 'Unknown',
+                sent: false,
+                time: new Date().toISOString()
+            });
+            await saveExcel('messages', messages);
+        });
+        
+        telegraf.launch();
+        bots[group.id] = telegraf;
+        pollingIntervals[group.id] = true;
+    } catch (e) {
+        logError('ERR_BOT_TOKEN', e.message, 'Telegram', `Group: ${group.id}`);
+    }
 }
 
-function startScheduleChecker() { 
-  scheduleIntervals.forEach(id => clearInterval(id)); 
-  scheduleIntervals = []; 
-  const id = setInterval(() => { checkAllSchedules(); }, 1000);
-  scheduleIntervals.push(id); 
+// ==================== РАСПИСАНИЯ ====================
+const scheduleJobs = {};
+
+function setupSchedule(schedule) {
+    if (scheduleJobs[schedule.id]) {
+        scheduleJobs[schedule.id].stop();
+    }
+    
+    if (schedule.status === 'active' && cron.validate(schedule.cron)) {
+        const job = cron.schedule(schedule.cron, async () => {
+            await executeSchedule(schedule);
+        });
+        scheduleJobs[schedule.id] = job;
+    }
 }
 
-app.on('window-all-closed', () => {});
-app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow()); 
-app.on('before-quit', () => { app.isQuitting = true; scheduleIntervals.forEach(id => clearInterval(id)); if (webServer) webServer.close(); if (db) { saveDatabase(); db.close(); } });
+async function executeSchedule(schedule) {
+    const groups = await loadExcel('groups');
+    const bots = await loadExcel('bots');
+    const group = groups.find(g => g.id == schedule.group_id);
+    const bot = bots.find(b => b.id == schedule.bot_id);
+    
+    if (!group || !bot) {
+        logError('ERR_SCHEDULE', 'Группа или бот не найдены', 'Schedule', `Schedule: ${schedule.id}`);
+        return;
+    }
+    
+    try {
+        const telegraf = new Telegraf(decrypt(bot.token));
+        await telegraf.telegram.sendMessage(group.chat_id, schedule.text);
+        
+        const schedules = await loadExcel('schedules');
+        const idx = schedules.findIndex(s => s.id == schedule.id);
+        if (idx >= 0) {
+            schedules[idx].last_run = new Date().toISOString();
+            await saveExcel('schedules', schedules);
+        }
+    } catch (e) {
+        logError('ERR_SCHEDULE', e.message, 'Schedule', `Schedule: ${schedule.id}`);
+    }
+}
+
+// ==================== ЗАПУСК ====================
+async function start() {
+    initDB();
+    
+    // Create default admin if not exists
+    const users = await loadExcel('users');
+    if (users.length === 0) {
+        await saveExcel('users', [{
+            id: 1,
+            login: CONFIG.adminLogin,
+            password: CONFIG.adminPassword,
+            role: 'admin',
+            status: 'active',
+            created_at: new Date().toISOString()
+        }]);
+    }
+    
+    // Setup schedules
+    const schedules = await loadExcel('schedules');
+    schedules.forEach(s => setupSchedule(s));
+    
+    // Start polling
+    syncPolling();
+    
+    // Start web server
+    app.listen(CONFIG.port, () => {
+        console.log(`HubPro v2.3.2 запущен на http://localhost:${CONFIG.port}`);
+    });
+}
+
+start().catch(console.error);
