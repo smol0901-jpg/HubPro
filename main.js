@@ -2,15 +2,11 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const path = require('path');
 const fs = require('fs');
-const crypto = require('crypto');
 const { Telegraf } = require('telegraf');
 const cron = require('node-cron');
-const ExcelJS = require('exceljs');
 
 const CONFIG = {
     port: 3000,
-    webPort: 8080,
-    encryptionKey: 'HubPro2026SecretKey',
     adminLogin: 'admin',
     adminPassword: '901Admin',
     dbPath: './database',
@@ -19,20 +15,31 @@ const CONFIG = {
 
 const app = express();
 app.use(bodyParser.json());
-app.use(express.static('renderer'));
+
+// Serve static files but redirect root to login
+app.use(express.static('renderer', {
+    index: false // Disable automatic index.html
+}));
+
+// Root redirects to login
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'renderer', 'login.html'));
+});
+
+app.get('/login', (req, res) => {
+    res.sendFile(path.join(__dirname, 'renderer', 'login.html'));
+});
 
 let bots = {};
 let schedules = [];
-let users = [];
 let settings = {};
 
 function initDB() {
     if (!fs.existsSyncSync(CONFIG.dbPath)) fs.mkdirSync(CONFIG.dbPath, { recursive: true });
     if (!fs.existsSyncSync(CONFIG.excelPath)) fs.mkdirSync(CONFIG.excelPath, { recursive: true });
-    const tables = ['kbots', 'groups', 'schedules', 'templates', 'users', 'messages', 'notifications', 'ai_tasks', 'error_logs', 'settings'];
-    tables.forEach(table => {
+    ['kbots', 'groups', 'schedules', 'users', 'messages', 'settings'].forEach(table => {
         const file = path.join(CONFIG.dbPath, table + '.json');
-        if (!fs.existsSyncSync(file)) fs.writeFileSync(file, '[]');
+        if (!fs.existsSyncSync(file)) fs.writeFileSync(file, table === 'kbots' ? '{}' : '[]');
     });
 }
 
@@ -40,7 +47,6 @@ function loadData() {
     try {
         bots = JSON.parse(fs.readFileSync(path.join(CONFIG.dbPath, 'kbots.json'), 'utf8') || '{}');
         schedules = JSON.parse(fs.readFileSync(path.join(CONFIG.dbPath, 'schedules.json'), 'utf8') || '[]');
-        users = JSON.parse(fs.readFileSync(path.join(CONFIG.dbPath, 'users.json'), 'utf8') || '[]');
         settings = JSON.parse(fs.readFileSync(path.join(CONFIG.dbPath, 'settings.json'), 'utf8') || '{}');
     } catch (e) { console.error('Error loading data:', e.message); }
 }
@@ -49,7 +55,6 @@ function saveData() {
     try {
         fs.writeFileSync(path.join(CONFIG.dbPath, 'kbots.json'), JSON.stringify(bots, null, 2));
         fs.writeFileSync(path.join(CONFIG.dbPath, 'schedules.json'), JSON.stringify(schedules, null, 2));
-        fs.writeFileSync(path.join(CONFIG.dbPath, 'users.json'), JSON.stringify(users, null, 2));
         fs.writeFileSync(path.join(CONFIG.dbPath, 'settings.json'), JSON.stringify(settings, null, 2));
     } catch (e) { console.error('Error saving data:', e.message); }
 }
@@ -59,44 +64,32 @@ function startBot(token) {
     try {
         const bot = new Telegraf(token);
         bots[token] = bot;
-
         bot.on('message', async (ctx) => {
             const msg = ctx.message;
             if (msg.text) {
-                const msgData = {
-                    id: Date.now(),
-                    botToken: token,
-                    chatId: msg.chat.id,
-                    chatTitle: msg.chat.title || msg.chat.username || 'Private',
-                    text: msg.text,
-                    date: new Date().toISOString()
-                };
                 const msgs = JSON.parse(fs.readFileSync(path.join(CONFIG.dbPath, 'messages.json'), 'utf8') || '[]');
-                msgs.push(msgData);
+                msgs.push({ id: Date.now(), botToken: token, chatId: msg.chat.id, chatTitle: msg.chat.title || 'Private', text: msg.text, date: new Date().toISOString() });
                 fs.writeFileSync(path.join(CONFIG.dbPath, 'messages.json'), JSON.stringify(msgs, null, 2));
             }
         });
-
         bot.launch().then(() => console.log(`Bot started: ${token.substring(0,10)}...`)).catch(e => console.error('Bot error:', e.message));
     } catch (e) { console.error('Start bot error:', e.message); }
 }
 
-// API Routes with proper error handling
+// API Routes
 app.post('/api/login', (req, res) => {
     const { login, password } = req.body;
-
     console.log(`[LOGIN] Attempt: ${login}`);
 
     if (!login || !password) {
-        console.log('[LOGIN] ERROR: Empty login or password');
         return res.json({ success: false, error: 'Введите логин и пароль' });
     }
 
     if (login === CONFIG.adminLogin && password === CONFIG.adminPassword) {
-        console.log('[LOGIN] SUCCESS: Admin logged in');
+        console.log('[LOGIN] SUCCESS');
         res.json({ success: true, user: { login: CONFIG.adminLogin, role: 'admin' } });
     } else {
-        console.log(`[LOGIN] FAILED: Wrong credentials for ${login}`);
+        console.log('[LOGIN] FAILED: Wrong credentials');
         res.json({ success: false, error: 'Неверный логин или пароль' });
     }
 });
@@ -105,113 +98,67 @@ app.get('/api/check-server', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
-app.get('/api/bots', (req, res) => {
-    res.json(bots);
-});
-
+app.get('/api/bots', (req, res) => res.json(bots));
 app.post('/api/bots', (req, res) => {
     const { name, token } = req.body;
-    if (!name || !token) {
-        return res.json({ success: false, error: 'Укажите имя и токен бота' });
-    }
-    const bot = { id: Date.now(), name, token, active: true };
-    bots[token] = bot;
+    if (!name || !token) return res.json({ success: false, error: 'Укажите имя и токен' });
+    bots[token] = { id: Date.now(), name, token, active: true };
     saveData();
     startBot(token);
-    res.json({ success: true, bot });
+    res.json({ success: true });
 });
-
 app.delete('/api/bots/:token', (req, res) => {
-    const { token } = req.params;
-    if (bots[token] && bots[token].stop) {
-        bots[token].stop();
-    }
-    delete bots[token];
+    if (bots[req.params.token]) bots[req.params.token].stop();
+    delete bots[req.params.token];
     saveData();
     res.json({ success: true });
 });
 
 app.get('/api/groups', (req, res) => {
-    const groups = JSON.parse(fs.readFileSync(path.join(CONFIG.dbPath, 'groups.json'), 'utf8') || '[]');
-    res.json(groups);
+    res.json(JSON.parse(fs.readFileSync(path.join(CONFIG.dbPath, 'groups.json'), 'utf8') || '[]'));
 });
-
 app.post('/api/groups', (req, res) => {
-    const { name, chatId, botToken } = req.body;
     const groups = JSON.parse(fs.readFileSync(path.join(CONFIG.dbPath, 'groups.json'), 'utf8') || '[]');
-    groups.push({ id: Date.now(), name, chatId, botToken });
+    groups.push({ id: Date.now(), ...req.body });
     fs.writeFileSync(path.join(CONFIG.dbPath, 'groups.json'), JSON.stringify(groups, null, 2));
     res.json({ success: true });
 });
 
-app.get('/api/schedules', (req, res) => {
-    res.json(schedules);
-});
-
+app.get('/api/schedules', (req, res) => res.json(schedules));
 app.post('/api/schedules', (req, res) => {
-    const { name, cronExpr, message, groupId, botToken } = req.body;
-    const schedule = { id: Date.now(), name, cronExpr, message, groupId, botToken, active: true };
-    schedules.push(schedule);
+    schedules.push({ id: Date.now(), ...req.body, active: true });
     saveData();
-    res.json({ success: true, schedule });
+    res.json({ success: true });
 });
 
 app.get('/api/messages', (req, res) => {
-    const messages = JSON.parse(fs.readFileSync(path.join(CONFIG.dbPath, 'messages.json'), 'utf8') || '[]');
-    res.json(messages);
-});
-
-app.get('/api/settings', (req, res) => {
-    res.json(settings);
-});
-
-app.post('/api/settings', (req, res) => {
-    settings = { ...settings, ...req.body };
-    saveData();
-    res.json({ success: true });
+    res.json(JSON.parse(fs.readFileSync(path.join(CONFIG.dbPath, 'messages.json'), 'utf8') || '[]'));
 });
 
 app.get('/api/stats', (req, res) => {
     const messages = JSON.parse(fs.readFileSync(path.join(CONFIG.dbPath, 'messages.json'), 'utf8') || '[]');
     const groups = JSON.parse(fs.readFileSync(path.join(CONFIG.dbPath, 'groups.json'), 'utf8') || '[]');
-    res.json({
-        totalMessages: messages.length,
-        totalGroups: groups.length,
-        activeBots: Object.keys(bots).length,
-        activeSchedules: schedules.filter(s => s.active).length
-    });
+    res.json({ totalMessages: messages.length, totalGroups: groups.length, activeBots: Object.keys(bots).length, activeSchedules: schedules.filter(s => s.active).length });
 });
 
-// Start server
 async function start() {
     initDB();
     loadData();
+    console.log('\n✅ HubPro Server Started');
+    console.log(`   URL: http://localhost:${CONFIG.port}`);
+    console.log(`   Login: ${CONFIG.adminLogin} / ${CONFIG.adminPassword}`);
 
-    console.log('Database initialized');
-    console.log(`Admin: ${CONFIG.adminLogin} / ${CONFIG.adminPassword}`);
+    Object.keys(bots).forEach(t => bots[t].active && startBot(t));
 
-    // Start bots
-    Object.keys(bots).forEach(token => {
-        if (bots[token].active) startBot(token);
-    });
-
-    // Start cron schedules
-    schedules.forEach(schedule => {
-        if (schedule.active && cron.validate(schedule.cronExpr)) {
-            cron.schedule(schedule.cronExpr, async () => {
-                if (bots[schedule.botToken]) {
-                    try {
-                        await bots[schedule.botToken].telegram.sendMessage(schedule.groupId, schedule.message);
-                    } catch (e) { console.error('Schedule error:', e.message); }
-                }
+    schedules.forEach(s => {
+        if (s.active && cron.validate(s.cronExpr)) {
+            cron.schedule(s.cronExpr, async () => {
+                if (bots[s.botToken]) try { await bots[s.botToken].telegram.sendMessage(s.groupId, s.message); } catch(e) {}
             });
         }
     });
 
-    app.listen(CONFIG.port, () => {
-        console.log(`\n✅ Server started on http://localhost:${CONFIG.port}`);
-        console.log(`✅ Web interface: http://localhost:${CONFIG.port}`);
-    });
+    app.listen(CONFIG.port, () => console.log('\n🚀 Ready to use!'));
 }
 
 start();
