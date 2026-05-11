@@ -13,7 +13,7 @@
   </style>
 </head>
 <body class="flex items-center justify-center">
-  <div class="glass rounded-2xl p-8 w-full max-w-md">
+  <div class="glass rounded-2xl p-8 w-full max-w-">
     <div class="text-center mb-8">
       <h1 class="text-3xl font-bold text-white">HubPro</h1>
       <p class="text-gray-400 mt-2">Центр управления Telegram</p>
@@ -59,27 +59,22 @@
     fetch('/api/check-server')
       .then(r => r.json())
       .then(d => {
-        console.log('Server OK:', d);
         statusDiv.className = 'mb-4 p-3 rounded-lg bg-green-500/20 border border-green-500 text-green-300 text-sm text-center';
         statusDiv.textContent = '✅ Сервер работает на порту ' + (d.port || '3000');
       })
       .catch(e => {
-        console.error('Server error:', e);
         statusDiv.className = 'mb-4 p-3 rounded-lg bg-red-500/20 border border-red-500 text-red-300 text-sm text-center';
         statusDiv.innerHTML = '❌ Сервер не отвечает<br><a href="http://localhost:3001" class="underline">Попробуйте порт 3001</a>';
       });
 
     document.getElementById('loginForm').addEventListener('submit', async (e) => {
       e.preventDefault();
-      e.stopPropagation();
 
       const login = document.getElementById('login').value;
       const password = document.getElementById('password').value;
       const submitBtn = document.getElementById('submitBtn');
       const errorDiv = document.getElementById('errorMessage');
       const successDiv = document.getElementById('successMessage');
-
-      console.log('Form submitted, login:', login, 'password:', password);
 
       errorDiv.classList.add('hidden');
       successDiv.classList.add('hidden');
@@ -88,21 +83,24 @@
       submitBtn.textContent = 'Проверка...';
 
       try {
-        console.log('Sending request to /api/login');
         const response = await fetch('/api/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ login, password })
         });
 
-        console.log('Response status:', response.status);
         const data = await response.json();
-        console.log('Response data:', data);
 
         if (data.success) {
+          // Save user to localStorage BEFORE redirect
+          localStorage.setItem('hubpro_user', JSON.stringify(data.user));
+
           successDiv.textContent = '✅ Успешно! Перенаправление...';
           successDiv.classList.remove('hidden');
-          setTimeout(() => window.location.href = '/index.html', 1000);
+
+          setTimeout(() => {
+            window.location.href = '/index.html';
+          }, 500);
         } else {
           errorDiv.textContent = '❌ ' + (data.error || 'Ошибка входа');
           errorDiv.classList.remove('hidden');
@@ -110,7 +108,6 @@
           submitBtn.textContent = 'Войти';
         }
       } catch (error) {
-        console.error('Fetch error:', error);
         errorDiv.innerHTML = '❌ Ошибка соединения с сервером';
         errorDiv.classList.remove('hidden');
         submitBtn.disabled = false;
