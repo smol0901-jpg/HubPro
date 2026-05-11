@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { Telegraf } = require('telegraf');
 const cron = require('node-cron');
+const http = require('http');
 
 const CONFIG = {
     port: 3000,
@@ -16,10 +17,8 @@ const CONFIG = {
 const app = express();
 app.use(bodyParser.json());
 
-// Serve static files but redirect root to login
-app.use(express.static('renderer', {
-    index: false // Disable automatic index.html
-}));
+// Serve static files
+app.use(express.static('renderer', { index: false }));
 
 // Root redirects to login
 app.get('/', (req, res) => {
@@ -95,7 +94,7 @@ app.post('/api/login', (req, res) => {
 });
 
 app.get('/api/check-server', (req, res) => {
-    res.json({ status: 'ok', time: new Date().toISOString() });
+    res.json({ status: 'ok', port: CONFIG.port, time: new Date().toISOString() });
 });
 
 app.get('/api/bots', (req, res) => res.json(bots));
@@ -144,21 +143,37 @@ app.get('/api/stats', (req, res) => {
 async function start() {
     initDB();
     loadData();
-    console.log('\n✅ HubPro Server Started');
-    console.log(`   URL: http://localhost:${CONFIG.port}`);
-    console.log(`   Login: ${CONFIG.adminLogin} / ${CONFIG.adminPassword}`);
 
-    Object.keys(bots).forEach(t => bots[t].active && startBot(t));
+    // Try to start server, handle port in use
+    const server = http.createServer(app);
 
-    schedules.forEach(s => {
-        if (s.active && cron.validate(s.cronExpr)) {
-            cron.schedule(s.cronExpr, async () => {
-                if (bots[s.botToken]) try { await bots[s.botToken].telegram.sendMessage(s.groupId, s.message); } catch(e) {}
-            });
+    server.on('error', (err) => {
+        if (err.code === 'EADDRINUSE') {
+            console.log(`\n⚠️ Порт ${CONFIG.port} занят!`);
+            console.log('Попробую порт 3001...');
+            CONFIG.port = 3001;
+        } else {
+            console.error('Server error:', err);
         }
     });
 
-    app.listen(CONFIG.port, () => console.log('\n🚀 Ready to use!'));
+    server.listen(CONFIG.port, () => {
+        console.log('\n✅ HubPro Server Started');
+        console.log(`   URL: http://localhost:${CONFIG.port}`);
+        console.log(`   Login: ${CONFIG.adminLogin} / ${CONFIG.adminPassword}`);
+
+        Object.keys(bots).forEach(t => bots[t].active && startBot(t));
+
+        schedules.forEach(s => {
+            if (s.active && cron.validate(s.cronExpr)) {
+                cron.schedule(s.cronExpr, async () => {
+                    if (bots[s.botToken]) try { await bots[s.botToken].telegram.sendMessage(s.groupId, s.message); } catch(e) {}
+                });
+            }
+        });
+
+        console.log('\n🚀 Ready to use!');
+    });
 }
 
 start();
