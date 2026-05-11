@@ -51,11 +51,11 @@
   <script>
     const API = '';
 
-    // Check server first
+    // Check server on load
     fetch(API + '/api/check-server')
       .then(r => r.json())
-      .then(d => console.log('Server OK:', d))
-      .catch(e => console.error('Server error:', e));
+      .then(d => console.log('Server connected:', d.status))
+      .catch(e => console.error('Server not responding:', e));
 
     document.getElementById('loginForm').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -66,11 +66,9 @@
       const errorDiv = document.getElementById('errorMessage');
       const successDiv = document.getElementById('successMessage');
 
-      // Hide previous messages
       errorDiv.classList.add('hidden');
       successDiv.classList.add('hidden');
 
-      // Show loading
       submitBtn.disabled = true;
       submitBtn.textContent = 'Проверка...';
 
@@ -87,12 +85,10 @@
           successDiv.textContent = '✅ Успешно! Перенаправление...';
           successDiv.classList.remove('hidden');
 
-          // Save auth
           localStorage.setItem('hubpro_user', JSON.stringify(data.user));
 
-          // Redirect after short delay
           setTimeout(() => {
-            window.location.href = '/dashboard.html';
+            window.location.href = '/index.html';
           }, 1000);
         } else {
           errorDiv.textContent = '❌ ' + (data.error || 'Ошибка входа');
@@ -101,7 +97,7 @@
           submitBtn.textContent = 'Войти';
         }
       } catch (error) {
-        errorDiv.textContent = '❌ Ошибка соединения с сервером. Убедитесь, что сервер запущен.';
+        errorDiv.textContent = '❌ Не удалось连接到 серверу. Проверьте, что сервер запущен (npm start)';
         errorDiv.classList.remove('hidden');
         submitBtn.disabled = false;
         submitBtn.textContent = 'Войти';
