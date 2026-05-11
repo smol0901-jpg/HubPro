@@ -53,21 +53,20 @@
   </div>
 
   <script>
-    const API = '';
     const statusDiv = document.getElementById('serverStatus');
 
     // Check server on load
-    fetch('/api/check-server', { mode: 'cors' })
-      .then(r => { console.log('Response status:', r.status); return r.json(); })
+    fetch('/api/check-server')
+      .then(r => r.json())
       .then(d => {
         console.log('Server OK:', d);
         statusDiv.className = 'mb-4 p-3 rounded-lg bg-green-500/20 border border-green-500 text-green-300 text-sm text-center';
-        statusDiv.textContent = '✅ Сервер работает! Можно входить';
+        statusDiv.textContent = '✅ Сервер работает на порту ' + (d.port || '3000');
       })
       .catch(e => {
         console.error('Server error:', e);
         statusDiv.className = 'mb-4 p-3 rounded-lg bg-red-500/20 border border-red-500 text-red-300 text-sm text-center';
-        statusDiv.textContent = '❌ Сервер не отвечает. Запусти npm start';
+        statusDiv.innerHTML = '❌ Сервер не отвечает<br><a href="http://localhost:3001" class="underline">Попробуйте порт 3001</a>';
       });
 
     document.getElementById('loginForm').addEventListener('submit', async (e) => {
@@ -84,7 +83,6 @@
 
       submitBtn.disabled = true;
       submitBtn.textContent = 'Проверка...';
-      console.log('Sending login request:', login);
 
       try {
         const response = await fetch('/api/login', {
@@ -93,9 +91,7 @@
           body: JSON.stringify({ login, password })
         });
 
-        console.log('Response status:', response.status);
         const data = await response.json();
-        console.log('Response data:', data);
 
         if (data.success) {
           successDiv.textContent = '✅ Успешно! Перенаправление...';
@@ -108,8 +104,7 @@
           submitBtn.textContent = 'Войти';
         }
       } catch (error) {
-        console.error('Fetch error:', error);
-        errorDiv.textContent = '❌ Ошибка: ' + error.message;
+        errorDiv.innerHTML = '❌ Ошибка соединения<br><a href="http://localhost:3001" class="underline">Попробуйте порт 3001</a>';
         errorDiv.classList.remove('hidden');
         submitBtn.disabled = false;
         submitBtn.textContent = 'Войти';
