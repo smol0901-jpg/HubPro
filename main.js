@@ -137,25 +137,26 @@ app.get('/api/stats', (req, res) => {
     res.json({ totalMessages: messages.length, totalGroups: groups.length, activeBots: Object.keys(bots).length, activeSchedules: schedules.filter(s => s.active).length });
 });
 
-async function start() {
-    initDB();
-    loadData();
-
+function startServer(port) {
     const server = http.createServer(app);
 
     server.on('error', (err) => {
         if (err.code === 'EADDRINUSE') {
-            console.log(`\n⚠️ Порт ${CONFIG.port} занят!`);
-            console.log('Попробую порт 3001...');
-            CONFIG.port = 3001;
+            console.log(`⚠️ Порт ${port} занят!`);
+            if (port < 3010) {
+                startServer(port + 1);
+            } else {
+                console.error('❌ Не удалось найти свободный порт');
+            }
         } else {
             console.error('Server error:', err);
         }
     });
 
-    server.listen(CONFIG.port, () => {
+    server.listen(port, () => {
+        CONFIG.port = port;
         console.log('\n✅ HubPro Server Started');
-        console.log(`   URL: http://localhost:${CONFIG.port}`);
+        console.log(`   URL: http://localhost:${port}`);
         console.log(`   Login: ${CONFIG.adminLogin} / ${CONFIG.adminPassword}`);
 
         Object.keys(bots).forEach(t => bots[t].active && startBot(t));
@@ -170,6 +171,12 @@ async function start() {
 
         console.log('\n🚀 Ready to use!');
     });
+}
+
+async function start() {
+    initDB();
+    loadData();
+    startServer(CONFIG.port);
 }
 
 start();
