@@ -17,10 +17,8 @@ const CONFIG = {
 const app = express();
 app.use(bodyParser.json());
 
-// Serve static files
 app.use(express.static('renderer', { index: false }));
 
-// Root redirects to login
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'renderer', 'login.html'));
 });
@@ -34,11 +32,11 @@ let schedules = [];
 let settings = {};
 
 function initDB() {
-    if (!fs.existsSyncSync(CONFIG.dbPath)) fs.mkdirSync(CONFIG.dbPath, { recursive: true });
-    if (!fs.existsSyncSync(CONFIG.excelPath)) fs.mkdirSync(CONFIG.excelPath, { recursive: true });
+    if (!fs.existsSync(CONFIG.dbPath)) fs.mkdirSync(CONFIG.dbPath, { recursive: true });
+    if (!fs.existsSync(CONFIG.excelPath)) fs.mkdirSync(CONFIG.excelPath, { recursive: true });
     ['kbots', 'groups', 'schedules', 'users', 'messages', 'settings'].forEach(table => {
         const file = path.join(CONFIG.dbPath, table + '.json');
-        if (!fs.existsSyncSync(file)) fs.writeFileSync(file, table === 'kbots' ? '{}' : '[]');
+        if (!fs.existsSync(file)) fs.writeFileSync(file, table === 'kbots' ? '{}' : '[]');
     });
 }
 
@@ -75,7 +73,6 @@ function startBot(token) {
     } catch (e) { console.error('Start bot error:', e.message); }
 }
 
-// API Routes
 app.post('/api/login', (req, res) => {
     const { login, password } = req.body;
     console.log(`[LOGIN] Attempt: ${login}`);
@@ -144,7 +141,6 @@ async function start() {
     initDB();
     loadData();
 
-    // Try to start server, handle port in use
     const server = http.createServer(app);
 
     server.on('error', (err) => {
