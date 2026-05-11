@@ -170,6 +170,33 @@
   <script>
     let currentUser = null, permissions = null, bots = [], groups = [], messages = [], schedules = [], users = [], templates = [], aiLogs = [], aiAlerts = [];
     let currentChatGroup = null, messageChart = null, activityChart = null, mainAdminLogin = 'NeuralAP';
+    // Check if already logged in
+    function checkAuth() {
+        const user = localStorage.getItem('hubpro_user');
+        if (user) {
+            try {
+                currentUser = JSON.parse(user);
+                showMainApp();
+                return true;
+            } catch(e) {
+                localStorage.removeItem('hubpro_user');
+            }
+        }
+        return false;
+    }
+
+    function showMainApp() {
+        document.getElementById('loginScreen').classList.add('hidden');
+        document.getElementById('mainApp').classList.remove('hidden');
+        loadDashboard();
+    }
+
+    // Run on page load
+    if (!checkAuth()) {
+        // Not logged in - redirect to login page
+        window.location.href = '/login.html';
+    }
+
     const TABS_CONFIG = {
       dashboard: { name: '📊 Дашборд', roles: ['admin'] },
       bots: { name: '🤖 Боты', roles: ['admin'] },
