@@ -249,7 +249,7 @@
       if (currentUser.role === 'admin') document.getElementById('addUserBtn').classList.remove('hidden');
     }
 
-    function logout() { currentUser = null; permissions = null; document.getElementById('loginScreen').classList.remove('hidden'); document.getElementById('mainApp').classList.add('hidden'); }
+    function logout() { localStorage.removeItem("hubpro_user"); { currentUser = null; permissions = null; document.getElementById('loginScreen').classList.remove('hidden'); document.getElementById('mainApp').classList.add('hidden'); }
 
     async function loadData() {
       bots = await window.electronAPI.getBots();
